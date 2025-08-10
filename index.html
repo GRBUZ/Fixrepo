@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Influencers Wall – 1 Million Pixels</title>
+  <link rel="stylesheet" href="css/style.css?v=1">
+  <link rel="stylesheet" href="css/pending-sold.css?v=1">
+  <link rel="stylesheet" href="css/overlay-zindex.css?v=1">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="title">Influencers Wall: 1 million pixels</div>
+      <div class="subtitle">Claim your spot on the ultimate influencer wall.</div>
+    </div>
+    <div class="meta">
+      <div id="priceLine" class="price">1 Pixel = $1.00</div>
+      <div id="pixelsLeft" class="left">1,000,000 pixels left</div>
+      <div class="actions">
+        <button id="buyButton" class="btn primary">Buy Pixels</button>
+        <button id="contactButton" class="btn">Contact me</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <div id="stage" class="stage">
+      <!-- Grid: always 100x100 blocks of 10px (1M pixels total) -->
+      <div id="pixelGrid" class="grid"></div>
+      <!-- Overlay to draw sold/region images -->
+      <div id="regionsLayer" class="regions"></div>
+    </div>
+
+    <!-- Buy / Info form (Netlify Forms compatible if you host on Netlify) -->
+    <form id="influencerForm" name="influencer-purchase" method="POST" data-netlify="true" class="panel hidden">
+      <input type="hidden" name="form-name" value="influencer-purchase">
+      <input id="blockIndex" type="hidden" name="blockIndex" value="">
+      <div class="row">
+        <label>Name or Handle</label>
+        <input name="name" required placeholder="@yourhandle">
+      </div>
+      <div class="row">
+        <label>Profile Image URL</label>
+        <input name="imageUrl" required placeholder="https://...">
+      </div>
+      <div class="row">
+        <label>Link (Instagram/TikTok/YouTube)</label>
+        <input name="linkUrl" required placeholder="https://instagram.com/your-handle">
+      </div>
+      <div class="row even">
+        <button type="submit" class="btn primary">Proceed to payment</button>
+        <button type="button" id="cancelForm" class="btn">Cancel</button>
+      </div>
+      <p class="hint">Payment placeholder: set your PayPal/Stripe link in <code>js/app.js</code>.</p>
+    </form>
+  </main>
+
+  <footer class="footer">
+    <div>© <span id="year"></span> Influencers Wall — All rights reserved.</div>
+    <a href="#" target="_blank">Terms of Use</a>
+  </footer>
+
+  <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
+  <script src="js/app.js?v=13"></script>
+  <script src="js/overlay-fix.js?v=1"></script>
+</body>
+</html>

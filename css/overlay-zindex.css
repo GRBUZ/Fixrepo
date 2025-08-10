@@ -1,0 +1,4 @@
+/* Regions overlay must sit above the grid */
+#stage{position:relative}
+#regionsLayer{position:absolute;left:0;top:0;width:1000px;height:1000px;z-index:20;pointer-events:auto}
+a.region{display:block;background-size:cover;background-position:center;background-repeat:no-repeat}

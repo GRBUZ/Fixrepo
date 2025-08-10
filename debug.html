@@ -1,0 +1,19 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Debug – Data & Images</title>
+<style>body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:20px;color:#111}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ddd;padding:8px}img{width:60px;height:60px;object-fit:cover;border:2px solid #10b981}.err{border-color:#ef4444}</style>
+</head><body>
+<h1>Debug – purchasedBlocks.json & images</h1>
+<button id="reload">Reload</button> <span id="status"></span>
+<table id="tbl" style="display:none"><thead><tr><th>Type</th><th>Index/Start</th><th>Size</th><th>Thumb</th><th>imageUrl</th><th>linkUrl</th><th>State</th></tr></thead><tbody></tbody></table>
+<script>
+async function load(){
+  const status=document.getElementById('status');const tbl=document.getElementById('tbl');const tbody=tbl.querySelector('tbody');
+  status.textContent='Loading ...';tbl.style.display='none';tbody.innerHTML='';
+  const res=await fetch('data/purchasedBlocks.json?ts='+Date.now(),{cache:'no-store'}); if(!res.ok){status.textContent='HTTP '+res.status;return;}
+  const data=await res.json(); let cells={},regions=[]; if(data && (data.cells||data.regions)){cells=data.cells||{};regions=data.regions||[]} else {cells=data||{};regions=[];}
+  const cE=Object.entries(cells); const rE=regions; status.textContent=`JSON OK — ${cE.length} cells, ${rE.length} regions.`; tbl.style.display='';
+  for(const [idx,info] of cE){const tr=document.createElement('tr');tr.innerHTML=`<td>cell</td><td>${idx}</td><td>1×1</td>`;const td=document.createElement('td');const img=document.createElement('img');img.src=info.imageUrl;td.appendChild(img);const tdU=document.createElement('td');tdU.textContent=info.imageUrl;const tdL=document.createElement('td');tdL.textContent=info.linkUrl||'';const tdS=document.createElement('td');tdS.textContent='…';img.onload=()=>tdS.textContent='OK';img.onerror=()=>{tdS.textContent='IMG ERR';img.classList.add('err');};tr.appendChild(td);tr.appendChild(tdU);tr.appendChild(tdL);tr.appendChild(tdS);tbody.appendChild(tr);}
+  for(const r of rE){const tr=document.createElement('tr');const td=document.createElement('td');tr.innerHTML=`<td>region</td><td>${r.start}</td><td>${r.w||1}×${r.h||1}</td>`;const tdI=document.createElement('td');const img=document.createElement('img');img.src=r.imageUrl;tdI.appendChild(img);const tdU=document.createElement('td');tdU.textContent=r.imageUrl;const tdL=document.createElement('td');tdL.textContent=r.linkUrl||'';const tdS=document.createElement('td');tdS.textContent='…';img.onload=()=>tdS.textContent='OK';img.onerror=()=>{tdS.textContent='IMG ERR';img.classList.add('err');};tr.appendChild(tdI);tr.appendChild(tdU);tr.appendChild(tdL);tr.appendChild(tdS);tbody.appendChild(tr);}
+}
+document.getElementById('reload').addEventListener('click',load); load();
+</script></body></html>

@@ -1,0 +1,19 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Locks Debug</title>
+<style>body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:20px}table{border-collapse:collapse;width:100%;margin-top:10px}td,th{border:1px solid #ddd;padding:8px}button{padding:6px 10px}</style>
+</head><body>
+<h1>Locks Live Debug</h1>
+<p>Status: <span id="s">–</span></p>
+<button id="r">Refresh</button>
+<table id="t" style="display:none"><thead><tr><th>Reservation</th><th>Blocks</th><th>Expire</th></tr></thead><tbody></tbody></table>
+<h2>Quick test</h2>
+<input id="b" placeholder="0,1,2" value="0,1,2"/> <button id="lock">Lock</button>
+<input id="rid" placeholder="reservationId"/> <button id="unlock">Unlock</button>
+<script>
+const $=s=>document.querySelector(s);
+async function refresh(){const res=await fetch('/.netlify/functions/status');const j=await res.json();$('#s').textContent=j.ok?'OK':'ERR';const t=$('#t'),tb=t.querySelector('tbody');tb.innerHTML='';if(j.ok&&j.locks){t.style.display='';for(const [id,l] of Object.entries(j.locks)){const tr=document.createElement('tr');tr.innerHTML=`<td>${id}</td><td>${(l.blocks||[]).join(', ')}</td><td>${new Date(l.expireAt).toLocaleTimeString()}</td>`;tb.appendChild(tr);} } else t.style.display='none';}
+$('#r').addEventListener('click',refresh);
+$('#lock').addEventListener('click',async()=>{const blocks=$('#b').value.split(',').map(s=>parseInt(s.trim())).filter(Number.isInteger);const r=await fetch('/.netlify/functions/lock',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({blocks})});const j=await r.json();if(j.ok){$('#rid').value=j.reservationId} alert(JSON.stringify(j)); await refresh();});
+$('#unlock').addEventListener('click',async()=>{const r=await fetch('/.netlify/functions/unlock',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({reservationId:$('#rid').value})});const j=await r.json();alert(JSON.stringify(j)); await refresh();});
+refresh();
+</script></body></html>
