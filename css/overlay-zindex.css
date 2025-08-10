@@ -1,4 +1,4 @@
-/* Click-through overlay (keeps images clickable) */
+/* Click-through overlay */
 #stage{position:relative}
 #pixelGrid{position:relative; z-index:10}
 #regionsLayer{position:absolute; inset:0; z-index:20; pointer-events:none}

@@ -4,9 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Influencers Wall – 1 Million Pixels</title>
-  <link rel="stylesheet" href="css/style.css?v=light2">
-  <link rel="stylesheet" href="css/pending-sold.css?v=light2">
+  <link rel="stylesheet" href="css/style.css?v=light3">
+  <link rel="stylesheet" href="css/pending-sold.css?v=light3">
   <link rel="stylesheet" href="css/overlay-zindex.css?v=2">
+  <link rel="stylesheet" href="css/modal.css?v=1">
 </head>
 <body>
   <header class="topbar">
@@ -32,29 +33,39 @@
       <div id="pixelGrid" class="grid"></div>
       <div id="regionsLayer" class="regions"></div>
     </div>
-
-    <form id="influencerForm" name="influencer-purchase" method="POST" data-netlify="true" class="panel hidden">
-      <input type="hidden" name="form-name" value="influencer-purchase">
-      <input id="blockIndex" type="hidden" name="blockIndex" value="">
-      <div class="row">
-        <label>Name or Handle</label>
-        <input name="name" required placeholder="@yourhandle">
-      </div>
-      <div class="row">
-        <label>Profile Image URL</label>
-        <input name="imageUrl" required placeholder="https://...">
-      </div>
-      <div class="row">
-        <label>Link (Instagram/TikTok/YouTube)</label>
-        <input name="linkUrl" required placeholder="https://instagram.com/your-handle">
-      </div>
-      <div class="row even">
-        <button type="submit" class="btn primary">Proceed to payment</button>
-        <button type="button" id="cancelForm" class="btn">Cancel</button>
-      </div>
-      <p class="hint">Payment placeholder: set your PayPal/Stripe link in <code>js/app.js</code>.</p>
-    </form>
   </main>
+
+  <!-- Modal popup for Buy Pixels -->
+  <div id="buyModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="buyTitle">
+    <div class="modal__backdrop" data-close></div>
+    <div class="modal__panel">
+      <div class="modal__header">
+        <div class="modal__title" id="buyTitle">Complete your purchase</div>
+        <button class="modal__close" title="Close" data-close>&times;</button>
+      </div>
+      <form id="influencerForm" name="influencer-purchase" method="POST" data-netlify="true" class="modal__body">
+        <input type="hidden" name="form-name" value="influencer-purchase">
+        <input id="blockIndex" type="hidden" name="blockIndex" value="">
+        <div class="row">
+          <label>Name or Handle</label>
+          <input name="name" required placeholder="@yourhandle">
+        </div>
+        <div class="row">
+          <label>Profile Image URL</label>
+          <input name="imageUrl" required placeholder="https://...">
+        </div>
+        <div class="row">
+          <label>Link (Instagram/TikTok/YouTube)</label>
+          <input name="linkUrl" required placeholder="https://instagram.com/your-handle">
+        </div>
+        <div class="row even">
+          <button type="submit" class="btn primary">Proceed to payment</button>
+          <button type="button" id="cancelForm" class="btn" data-close>Cancel</button>
+        </div>
+        <p class="hint">Payment placeholder: set your PayPal/Stripe link in <code>js/app.js</code>.</p>
+      </form>
+    </div>
+  </div>
 
   <footer class="footer">
     <div>© <span id="year"></span> Influencers Wall — All rights reserved.</div>
@@ -62,7 +73,7 @@
   </footer>
 
   <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
-  <script src="js/app.js?v=13"></script>
+  <script src="js/app.optimized.js?v=1"></script>
   <script src="js/overlay-fix.js?v=2"></script>
 </body>
 </html>
