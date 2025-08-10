@@ -1,23 +1,154 @@
-/* Light theme + violet accents (fast patch) */
-*{box-sizing:border-box}
-body{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;background:#ffffff;color:#111827}
-a{color:#6d28d9}
-.topbar{position:sticky;top:0;z-index:999;background:#ffffff;border-bottom:1px solid #e5e7eb;padding:10px 14px;display:flex;gap:18px;align-items:center;justify-content:space-between}
-.topbar .title{font-weight:800;font-size:18px;color:#4c1d95}
-.topbar .subtitle{opacity:.9;font-size:12px;color:#6b7280}
-.meta{display:flex;gap:16px;align-items:center}
-.price-wrap{display:flex;flex-direction:column;gap:2px}
-.meta .price{font-weight:700;font-size:14px;color:#111827}
-.meta .note{font-size:12px;color:#6b7280}
-.meta .left{font-weight:600;font-size:14px;color:#374151}
-.actions{display:flex;gap:8px}
-.btn{background:#ffffff;border:1px solid #d1d5db;padding:8px 12px;border-radius:10px;color:#111827;cursor:pointer}
-.btn.primary{background:#6d28d9;border-color:#6d28d9;color:#fff}
-.btn:disabled{opacity:.6;cursor:not-allowed}
-.container{padding:14px;display:flex;flex-direction:column;gap:12px}
-.stage{position:relative;width:1000px;height:1000px;margin:0 auto;border:1px solid #e5e7eb;background:#ffffff}
-.grid{display:grid;grid-template-columns:repeat(100,10px);grid-auto-rows:10px;gap:0;position:relative;z-index:10}
-.block{width:10px;height:10px;border:1px solid #e5e7eb;background:#fafafa;cursor:pointer;transition:background .08s, outline .08s}
-.block:hover{outline:1px solid #6d28d9}
-.footer{padding:18px;text-align:center;color:#6b7280}
-.hidden{display:none}
+* { box-sizing: border-box; }
+:root {
+  --violet: #7c3aed;        /* primary */
+  --violet-dark: #5b21b6;   /* darker */
+  --bg: #ffffff;
+  --line: #e5e7eb;
+  --text: #111827;
+  --muted: #6b7280;
+  --accent: #ef4444;
+  --border: #cbd5e1;
+}
+html, body { height: 100%; }
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  color: var(--text);
+  display: flex; flex-direction: column; min-height: 100vh;
+  background: #f8fafc;
+}
+
+.container { max-width: 1100px; margin: 0 auto; padding: 0 12px; }
+
+/* --- Header: banner + thin nav --- */
+.hero {
+  background: linear-gradient(180deg, var(--violet) 0%, var(--violet-dark) 100%);
+  color: #fff;
+  border-bottom: 1px solid var(--line);
+}
+.hero-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 16px;
+  align-items: center;
+  padding: 14px 0;
+}
+.brand h1 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 800;
+  letter-spacing: .2px;
+}
+.brand .tagline {
+  margin: 2px 0 0;
+  font-size: .95rem;
+  opacity: .95;
+}
+.stats { text-align: right; font-size: .95rem; }
+.stats .price { font-weight: 700; }
+.stats .rule, .stats .left { opacity: .9; font-size: .9rem; }
+
+/* Thin nav bar below */
+.nav {
+  background: rgba(255,255,255,.15);
+  border-top: 1px solid rgba(255,255,255,.25);
+  border-bottom: 1px solid var(--line);
+}
+.nav-row {
+  /*display: flex; gap: 10px;
+  padding: 6px 0;*/
+  display: flex; gap: 10px;
+  padding: 6px 0;
+  justify-content: center; /* Centers horizontally */
+  align-items: center;    /* Centers vertically */
+  /* Add height or min-height to the container if needed for vertical centering */
+  /*min-height: 100px;*/ /* Example height */
+}
+.nav-link {
+  color: #fff;
+  text-decoration: none;
+  font-weight: 700;
+  font-size: .95rem;
+  padding: 6px 12px;
+  border: 1px solid rgba(255,255,255,.45);
+  border-radius: 999px;
+  background: rgba(255,255,255,.12);
+}
+.nav-link:hover { background: rgba(255,255,255,.2); }
+.nav-link.ghost {
+  background: transparent;
+  border-color: rgba(255,255,255,.35);
+}
+
+/* Stage with overlay */
+.grid-container {
+  flex: 1; display: flex; justify-content: center; align-items: center;
+  padding: 1rem; overflow: auto;
+}
+.stage {
+  position: relative;
+  width: 1000px; height: 1000px;
+}
+.grid {
+  position: absolute; left: 0; top: 0;
+  display: grid;
+  grid-template-columns: repeat(100, 10px);
+  grid-template-rows: repeat(100, 10px);
+  width: 1000px; height: 1000px;
+  image-rendering: pixelated;
+  border: 1px solid var(--border);
+  background: #e5e7eb;
+  z-index: 1;
+}
+#regionsLayer {
+  position: absolute; left: 0; top: 0;
+  width: 1000px; height: 1000px;
+  z-index: 2;
+  pointer-events: none; /* regions re-enable pointer-events individually */
+}
+.region { 
+  position: absolute; display: block;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: cover;
+  pointer-events: auto;
+  border: 1px solid rgba(124,58,237,.25); /* subtle violet */
+}
+
+/* Cells */
+.block { 
+  display: block;              /* important for <a class="block"> */
+  width: 10px; 
+  height: 10px; 
+  background: #f1f5f9; 
+  border: 1px solid #e2e8f0; 
+}
+.block.selected { outline: 1px solid var(--accent); }
+.block.sold { /* legacy single-cell style (unused with overlay) */ }
+
+/* Modal */
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.6);
+  display: flex; justify-content: center; align-items: center; z-index: 1000; }
+.hidden { display: none; }
+#influencerForm {
+  background: #fff; color: var(--text); padding: 1.25rem;
+  border-radius: 10px; max-width: 420px; width: 100%;
+  box-shadow: 0 10px 30px rgba(0,0,0,.2);
+}
+#influencerForm h2 { margin: .1rem 0 1rem; font-size: 1.15rem; }
+#influencerForm label { display: block; margin-bottom: .85rem; font-size: .95rem; }
+#influencerForm input[type="url"],
+#influencerForm input[type="email"],
+#influencerForm input[type="file"] {
+  width: 100%; padding: .55rem; margin-top: .35rem;
+  border: 1px solid var(--border); border-radius: 6px;
+}
+#influencerForm .buttons { display: flex; gap: .5rem; justify-content: flex-end; margin-top: .75rem; }
+.btn { background: var(--violet); border: 1px solid transparent; color: #fff; padding: .55rem 1rem; border-radius: 8px; cursor: pointer; }
+.btn-ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
+
+footer {
+  background: #f1f5f9; padding: 1rem; text-align: center;
+  font-size: .9rem; border-top: 1px solid var(--line);
+}
+footer a { color: var(--violet); text-decoration: none; }
