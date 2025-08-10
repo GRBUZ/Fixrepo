@@ -22,9 +22,11 @@ export default async () => {
     for (const lock of Object.values(state.locks || {})) {
       if (lock?.expireAt > t) for (const b of (lock.blocks || [])) pending.add(+b);
     }
-    const sold = Object.keys(state.sold || {}).map(n => +n);
 
-    return json({ ok:true, now:t, pending:Array.from(pending), sold });
+    const sold = Object.keys(state.sold || {}).map(n => +n);
+    const artCells = state.sold || {};
+
+    return json({ ok:true, now:t, pending:Array.from(pending), sold, artCells });
   } catch (e) {
     console.error('status error', e);
     return json({ ok:false, error:'SERVER_ERROR', message:e?.message || String(e) }, 500);
