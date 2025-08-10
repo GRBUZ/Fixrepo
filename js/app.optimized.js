@@ -188,10 +188,11 @@ form.addEventListener('submit', async (e) => {
   e.preventDefault();
   const data = new FormData(form);
   try { await fetch(form.action || '/', { method: 'POST', body: data }); } catch {}
-  const blocks = Array.from(myReservedSet);
-  const total = Math.round(getCurrentBlockPrice() * blocks.length * 100) / 100;
-  const note = `blocks-${blocks.join(',')}`;
-  location.href = `${paymentUrl}/${total}?note=${note}`;
+  //const blocks = Array.from(myReservedSet);
+  //const total = Math.round(getCurrentBlockPrice() * blocks.length * 100) / 100;
+  //const note = `blocks-${blocks.join(',')}`;
+  //location.href = `${paymentUrl}/${total}?note=${note}`;
+  window.location.href = influencerForm.action || '/success.html'; // test: page de succès
 });
 
 // ---- Init ----
