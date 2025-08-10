@@ -1,4 +1,4 @@
-// Optimized front: instant selection + minimal DOM updates + modal popup
+// FRONT patch: finalize purchase => SOLD (no payment), dynamic art from status, skip unlock on success
 const grid = document.getElementById('pixelGrid');
 const regionsLayer = document.getElementById('regionsLayer');
 const buyButton = document.getElementById('buyButton');
@@ -8,7 +8,6 @@ const form = document.getElementById('influencerForm');
 const cancelForm = document.getElementById('cancelForm');
 const priceLine = document.getElementById('priceLine');
 const pixelsLeftEl = document.getElementById('pixelsLeft');
-const paymentUrl = 'https://paypal.me/YourUSAccount'; // TODO
 
 const TOTAL_PIXELS = 1_000_000;
 const GRID_SIZE = 100;
@@ -16,15 +15,17 @@ const CELL_PX = 10;
 const STATUS_POLL_MS = 1500;
 const DATA_VERSION = 13;
 
-let cellsMap = {};
-let regions = [];
-let pendingSet = new Set();     // everyone
-let myReservedSet = new Set();  // mine only
+let cellsMap = {};          // static cells from data/purchasedBlocks.json
+let regions = [];           // static regions
+let dynCells = {};          // dynamic art from server (status.artCells)
+let pendingSet = new Set(); // everyone
+let myReservedSet = new Set();
 let activeReservationId = localStorage.getItem('iw_reservation_id') || null;
+let purchaseComplete = localStorage.getItem('iw_purchase_complete') === '1';
 
 const cells = new Array(GRID_SIZE * GRID_SIZE);
 
-// ---- Pricing (unchanged) ----
+// ---- Pricing ----
 function committedSoldSet() {
   const set = new Set();
   for (const k of Object.keys(cellsMap)) set.add(+k);
@@ -33,6 +34,7 @@ function committedSoldSet() {
     const sr = Math.floor(start / GRID_SIZE), sc = start % GRID_SIZE;
     for (let dy = 0; dy < h; dy++) for (let dx = 0; dx < w; dx++) set.add((sr+dy)*GRID_SIZE+(sc+dx));
   }
+  for (const k of Object.keys(dynCells)) set.add(+k);
   return set;
 }
 function getBlocksSold() { return committedSoldSet().size; }
@@ -54,13 +56,19 @@ async function loadStatus() {
   try {
     const r = await fetch('/.netlify/functions/status', { cache: 'no-store' });
     const s = await r.json();
-    // Fast diff update: compute added/removed pending
     const old = pendingSet;
     const next = new Set(s.pending || []);
     for (const b of next) if (!old.has(b) && !myReservedSet.has(b)) setCellState(b, 'pending');
     for (const b of old) if (!next.has(b) && !myReservedSet.has(b)) setCellState(b, 'free');
     pendingSet = next;
-  } catch {}
+    dynCells = s.artCells || {};
+    paintRegions();
+    const sold = committedSoldSet();
+    for (let i = 0; i < cells.length; i++) {
+      if (sold.has(i)) setCellState(i, 'sold');
+    }
+    refreshHeader();
+  } catch (e) {}
 }
 async function loadData() {
   const r = await fetch(`data/purchasedBlocks.json?v=${DATA_VERSION}`, { cache: 'no-store' });
@@ -80,12 +88,10 @@ function buildGridOnce() {
     cells[i] = el;
     frag.appendChild(el);
   }
-  grid.innerHTML = '';
-  grid.appendChild(frag);
-  // initial paint
+  pixelGrid.innerHTML = '';
+  pixelGrid.appendChild(frag);
   const sold = committedSoldSet();
   for (let i = 0; i < cells.length; i++) setCellState(i, sold.has(i) ? 'sold' : 'free');
-  // overlay images
   paintRegions();
 }
 
@@ -107,21 +113,25 @@ function paintRegions() {
     a.style.width = (w * CELL) + 'px'; a.style.height = (h * CELL) + 'px'; a.style.backgroundImage = `url(${r.imageUrl})`;
     regionsLayer.appendChild(a);
   }
+  for (const [k, info] of Object.entries(dynCells)) {
+    const idx = +k; const row = Math.floor(idx / GRID_SIZE), col = idx % GRID_SIZE;
+    const a = document.createElement('a'); a.href = (info && info.linkUrl) || '#'; a.target = '_blank'; a.className = 'region';
+    a.style.left = (col * CELL) + 'px'; a.style.top = (row * CELL) + 'px';
+    a.style.width = CELL + 'px'; a.style.height = CELL + 'px'; a.style.backgroundImage = `url(${info && info.imageUrl})`;
+    regionsLayer.appendChild(a);
+  }
 }
 
-// State machine for a cell: 'free' | 'mine' | 'pending' | 'sold'
 function setCellState(idx, state) {
   const el = cells[idx]; if (!el) return;
   el.className = 'block';
   if (state === 'sold') { el.classList.add('sold'); return; }
   if (state === 'pending') { el.classList.add('pending'); return; }
   if (state === 'mine') { el.classList.add('pending','selected'); return; }
-  // 'free' -> nothing extra
 }
 
 async function onCellClick(e) {
   const idx = parseInt(e.currentTarget.dataset.index);
-  // If it's mine -> remove immediately (optimistic)
   if (myReservedSet.has(idx)) {
     setCellState(idx, 'free'); myReservedSet.delete(idx); updateBuyLabel();
     try {
@@ -134,17 +144,12 @@ async function onCellClick(e) {
       if (!res.reservationId) { activeReservationId = null; localStorage.removeItem('iw_reservation_id'); myReservedSet.clear(); }
       else { activeReservationId = res.reservationId; localStorage.setItem('iw_reservation_id', activeReservationId); myReservedSet = new Set(res.blocks || Array.from(myReservedSet)); }
     } catch {
-      // rollback if server said no (rare)
       myReservedSet.add(idx); setCellState(idx, 'mine'); updateBuyLabel();
     }
     return;
   }
-
-  // If someone else's pending or sold -> ignore
   const sold = committedSoldSet();
   if (pendingSet.has(idx) || sold.has(idx)) return;
-
-  // Free -> optimistic add immediately
   setCellState(idx, 'mine'); myReservedSet.add(idx); updateBuyLabel();
   try {
     const r = await fetch('/.netlify/functions/lock', {
@@ -154,7 +159,6 @@ async function onCellClick(e) {
     const res = await r.json();
     if (!r.ok) {
       if (r.status === 409) {
-        // conflict -> revert
         myReservedSet.delete(idx); setCellState(idx, 'pending'); updateBuyLabel();
         return;
       }
@@ -162,16 +166,14 @@ async function onCellClick(e) {
     }
     activeReservationId = res.reservationId || activeReservationId;
     localStorage.setItem('iw_reservation_id', activeReservationId);
-    // Trust server blocks (keeps us consistent)
     myReservedSet = new Set(res.blocks || Array.from(myReservedSet));
     for (const b of myReservedSet) setCellState(b, 'mine');
   } catch {
-    // rollback
     myReservedSet.delete(idx); setCellState(idx, 'free'); updateBuyLabel();
   }
 }
 
-// ---- Modal helpers ----
+// Modal
 function openModal(){ buyModal.classList.remove('hidden'); }
 function closeModal(){ buyModal.classList.add('hidden'); }
 buyButton.addEventListener('click', () => {
@@ -183,19 +185,35 @@ buyModal.addEventListener('click', (e) => { if (e.target.matches('[data-close]')
 cancelForm.addEventListener('click', closeModal);
 contactButton.addEventListener('click', () => location.href='mailto:you@domain.com');
 
-// Netlify form submit -> redirect payment
+// Submit -> finalize (no payment)
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   const data = new FormData(form);
   try { await fetch(form.action || '/', { method: 'POST', body: data }); } catch {}
-  //const blocks = Array.from(myReservedSet);
-  //const total = Math.round(getCurrentBlockPrice() * blocks.length * 100) / 100;
-  //const note = `blocks-${blocks.join(',')}`;
-  //location.href = `${paymentUrl}/${total}?note=${note}`;
-  window.location.href = influencerForm.action || '/success.html'; // test: page de succès
+  try {
+    const payload = {
+      reservationId: activeReservationId,
+      imageUrl: data.get('imageUrl'),
+      linkUrl: data.get('linkUrl'),
+      name: data.get('name')
+    };
+    const r = await fetch('/.netlify/functions/finalize', {
+      method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const res = await r.json();
+    if (!r.ok || !res.ok) throw new Error(res.error || ('HTTP '+r.status));
+    localStorage.setItem('iw_purchase_complete', '1');
+    activeReservationId = null; localStorage.removeItem('iw_reservation_id');
+    myReservedSet = new Set(); localStorage.removeItem('iw_my_blocks');
+    closeModal();
+    await loadStatus();
+    updateBuyLabel();
+  } catch (e2) {
+    alert('Could not finalize: ' + (e2?.message || e2));
+  }
 });
 
-// ---- Init ----
 (async () => {
   await loadData();
   buildGridOnce();
@@ -204,9 +222,10 @@ form.addEventListener('submit', async (e) => {
   setInterval(loadStatus, STATUS_POLL_MS);
 })();
 
-// Unlock on exit
+// Skip unlock on exit after finalize (only unlock if reservation still active)
 window.addEventListener('pagehide', () => {
   if (!activeReservationId) return;
+  if (localStorage.getItem('iw_purchase_complete') === '1') return;
   try {
     const payload = JSON.stringify({ reservationId: activeReservationId });
     const blob = new Blob([payload], { type: 'application/json' });
