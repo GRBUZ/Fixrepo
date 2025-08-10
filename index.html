@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Influencers Wall – 1 Million Pixels</title>
-  <link rel="stylesheet" href="css/style.css?v=1">
-  <link rel="stylesheet" href="css/pending-sold.css?v=1">
-  <link rel="stylesheet" href="css/overlay-zindex.css?v=1">
+  <link rel="stylesheet" href="css/style.css?v=light2">
+  <link rel="stylesheet" href="css/pending-sold.css?v=light2">
+  <link rel="stylesheet" href="css/overlay-zindex.css?v=2">
 </head>
 <body>
   <header class="topbar">
@@ -15,7 +15,10 @@
       <div class="subtitle">Claim your spot on the ultimate influencer wall.</div>
     </div>
     <div class="meta">
-      <div id="priceLine" class="price">1 Pixel = $1.00</div>
+      <div class="price-wrap">
+        <div id="priceLine" class="price">1 Pixel = $1.00</div>
+        <div id="priceNote" class="note">Price increases by $0.01 every 1,000 pixels sold.</div>
+      </div>
       <div id="pixelsLeft" class="left">1,000,000 pixels left</div>
       <div class="actions">
         <button id="buyButton" class="btn primary">Buy Pixels</button>
@@ -26,13 +29,10 @@
 
   <main class="container">
     <div id="stage" class="stage">
-      <!-- Grid: always 100x100 blocks of 10px (1M pixels total) -->
       <div id="pixelGrid" class="grid"></div>
-      <!-- Overlay to draw sold/region images -->
       <div id="regionsLayer" class="regions"></div>
     </div>
 
-    <!-- Buy / Info form (Netlify Forms compatible if you host on Netlify) -->
     <form id="influencerForm" name="influencer-purchase" method="POST" data-netlify="true" class="panel hidden">
       <input type="hidden" name="form-name" value="influencer-purchase">
       <input id="blockIndex" type="hidden" name="blockIndex" value="">
@@ -63,6 +63,6 @@
 
   <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
   <script src="js/app.js?v=13"></script>
-  <script src="js/overlay-fix.js?v=1"></script>
+  <script src="js/overlay-fix.js?v=2"></script>
 </body>
 </html>

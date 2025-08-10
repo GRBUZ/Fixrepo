@@ -1,4 +1,5 @@
-/* Regions overlay must sit above the grid */
+/* Click-through overlay (keeps images clickable) */
 #stage{position:relative}
-#regionsLayer{position:absolute;left:0;top:0;width:1000px;height:1000px;z-index:20;pointer-events:auto}
-a.region{display:block;background-size:cover;background-position:center;background-repeat:no-repeat}
+#pixelGrid{position:relative; z-index:10}
+#regionsLayer{position:absolute; inset:0; z-index:20; pointer-events:none}
+a.region{display:block; background-size:cover; background-position:center; background-repeat:no-repeat; pointer-events:auto}
