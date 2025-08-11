@@ -1,4 +1,6 @@
-// Optimized front + finalize + cancel unlock + minimal modal + DRAG selection
+// JS patch: robust finalize (auto re-lock if LOCK_NOT_FOUND)
+// Drop-in replacement for js/app.optimized.js (same public API + drag select etc.)
+
 const grid = document.getElementById('pixelGrid');
 const regionsLayer = document.getElementById('regionsLayer');
 const buyButton = document.getElementById('buyButton');
@@ -22,27 +24,23 @@ const GRID_SIZE = 100;
 const STATUS_POLL_MS = 1200;
 const DATA_VERSION = 13;
 
-let cellsMap = {};          // static
-let regions = [];           // static
-let dynCells = {};          // dynamic (sold at runtime)
+let cellsMap = {};
+let regions = [];
+let dynCells = {};
 let pendingSet = new Set();
 let myReservedSet = new Set();
 let activeReservationId = localStorage.getItem('iw_reservation_id') || null;
 
 const cells = new Array(GRID_SIZE * GRID_SIZE);
 
-// ---- Pricing ----
+/* Pricing */
 function committedSoldSet() {
   const set = new Set();
   for (const k of Object.keys(cellsMap)) set.add(+k);
   for (const r of regions) {
     const start = (r.start|0), w = Math.max(1, r.w|0), h = Math.max(1, r.h|0);
     const sr = Math.floor(start / GRID_SIZE), sc = start % GRID_SIZE;
-    for (let dy = 0; dy < h; dy++) {
-      for (let dx = 0; dx < w; dx++) {
-        set.add((sr+dy)*GRID_SIZE+(sc+dx));
-      }
-    }
+    for (let dy = 0; dy < h; dy++) for (let dx = 0; dx < w; dx++) set.add((sr+dy)*GRID_SIZE+(sc+dx));
   }
   for (const k of Object.keys(dynCells)) set.add(+k);
   return set;
@@ -61,7 +59,7 @@ function updateBuyLabel() {
   buyButton.textContent = c === 0 ? 'Buy Pixels' : `Buy ${c} block${c>1?'s':''} (${c*100} px) – ${formatUSD(getCurrentBlockPrice()*c)}`;
 }
 
-// ---- Data ----
+/* Data */
 async function loadStatus() {
   try {
     const r = await fetch('/.netlify/functions/status', { cache: 'no-store' });
@@ -86,7 +84,7 @@ async function loadData() {
   else { cellsMap = data || {}; regions = []; }
 }
 
-// ---- Grid ----
+/* Grid */
 function buildGridOnce() {
   const frag = document.createDocumentFragment();
   for (let i = 0; i < GRID_SIZE * GRID_SIZE; i++) {
@@ -109,7 +107,6 @@ function buildGridOnce() {
 function paintRegions() {
   const CELL = 10;
   regionsLayer.innerHTML = '';
-  // static 1x1
   for (const [k, info] of Object.entries(cellsMap)) {
     const idx = +k; const row = Math.floor(idx / GRID_SIZE), col = idx % GRID_SIZE;
     const a = document.createElement('a'); a.href = info.linkUrl || '#'; a.target = '_blank'; a.className = 'region';
@@ -117,7 +114,6 @@ function paintRegions() {
     a.style.width = CELL + 'px'; a.style.height = CELL + 'px'; a.style.backgroundImage = `url(${info.imageUrl})`;
     regionsLayer.appendChild(a);
   }
-  // static regions
   for (const r of regions) {
     const start = (r.start|0), w = Math.max(1, r.w|0), h = Math.max(1, r.h|0);
     const row = Math.floor(start / GRID_SIZE), col = start % GRID_SIZE;
@@ -126,7 +122,6 @@ function paintRegions() {
     a.style.width = (w * CELL) + 'px'; a.style.height = (h * CELL) + 'px'; a.style.backgroundImage = `url(${r.imageUrl})`;
     regionsLayer.appendChild(a);
   }
-  // dynamic sold 1x1
   for (const [k, info] of Object.entries(dynCells)) {
     const idx = +k; const row = Math.floor(idx / GRID_SIZE), col = idx % GRID_SIZE;
     const a = document.createElement('a'); a.href = (info && info.linkUrl) || '#'; a.target = '_blank'; a.className = 'region';
@@ -145,10 +140,9 @@ function setCellState(idx, state) {
   if (state === 'preview') { el.classList.add('preview'); return; }
 }
 
-// ---- Click selection (existing) ----
+/* Click selection */
 async function onCellClick(e) {
   const idx = parseInt(e.currentTarget.dataset.index);
-  // remove mine
   if (myReservedSet.has(idx)) {
     setCellState(idx, 'free'); myReservedSet.delete(idx); updateBuyLabel();
     try {
@@ -165,10 +159,8 @@ async function onCellClick(e) {
     }
     return;
   }
-  // ignore taken
   const sold = committedSoldSet();
   if (pendingSet.has(idx) || sold.has(idx)) return;
-  // optimistic add
   setCellState(idx, 'mine'); myReservedSet.add(idx); updateBuyLabel();
   try {
     const r = await fetch('/.netlify/functions/lock', {
@@ -189,7 +181,7 @@ async function onCellClick(e) {
   }
 }
 
-// ---- DRAG selection (Excel-like) ----
+/* DRAG selection */
 let isDragging = false;
 let dragStart = null;
 let previewSet = new Set();
@@ -203,33 +195,28 @@ function idxFromXY(clientX, clientY) {
   if (x < 0 || y < 0 || x >= GRID_SIZE || y >= GRID_SIZE) return -1;
   return y * GRID_SIZE + x;
 }
-
 function applyPreview(toIdx) {
-  // clear old preview (only those not already mine)
   for (const i of previewSet) {
     if (!myReservedSet.has(i)) setCellState(i, 'free');
   }
   previewSet.clear();
   if (toIdx < 0 || dragStart === null) return;
-
   const a = dragStart;
   const aRow = Math.floor(a / GRID_SIZE), aCol = a % GRID_SIZE;
   const bRow = Math.floor(toIdx / GRID_SIZE), bCol = toIdx % GRID_SIZE;
   const r0 = Math.min(aRow, bRow), r1 = Math.max(aRow, bRow);
   const c0 = Math.min(aCol, bCol), c1 = Math.max(aCol, bCol);
-
   const sold = committedSoldSet();
   for (let r = r0; r <= r1; r++) {
     for (let c = c0; c <= c1; c++) {
       const idx = r * GRID_SIZE + c;
-      if (sold.has(idx) || pendingSet.has(idx)) continue; // skip taken
+      if (sold.has(idx) || pendingSet.has(idx)) continue;
       if (myReservedSet.has(idx)) { setCellState(idx, 'mine'); continue; }
       previewSet.add(idx);
       setCellState(idx, 'preview');
     }
   }
 }
-
 function onPointerDown(e) {
   if (!(e.target && e.target.classList.contains('block'))) return;
   const idx = parseInt(e.target.dataset.index);
@@ -238,12 +225,10 @@ function onPointerDown(e) {
   dragStart = idx;
   lastPoint = { x: e.clientX, y: e.clientY };
   applyPreview(idx);
-
   window.addEventListener('pointermove', onPointerMove);
   window.addEventListener('pointerup', onPointerUp, { once: true });
   e.preventDefault();
 }
-
 function onPointerMove(e) {
   lastPoint = { x: e.clientX, y: e.clientY };
   if (rafPending) return;
@@ -255,20 +240,15 @@ function onPointerMove(e) {
     applyPreview(idx);
   });
 }
-
 async function onPointerUp(e) {
   window.removeEventListener('pointermove', onPointerMove);
   isDragging = false;
   const additions = Array.from(previewSet).filter(i => !myReservedSet.has(i));
-  // clear preview (UI will be set to 'mine' optimistically next)
   for (const i of previewSet) setCellState(i, 'free');
   previewSet.clear();
   if (additions.length === 0) return;
-
-  // Optimistic: mark all as mine
   for (const i of additions) { setCellState(i, 'mine'); myReservedSet.add(i); }
   updateBuyLabel();
-
   try {
     const r = await fetch('/.netlify/functions/lock', {
       method:'POST', headers:{'content-type':'application/json'},
@@ -276,7 +256,6 @@ async function onPointerUp(e) {
     });
     const res = await r.json();
     if (!r.ok) {
-      // revert only those not accepted
       for (const i of additions) if (myReservedSet.has(i)) { myReservedSet.delete(i); setCellState(i, 'free'); }
       updateBuyLabel();
       return;
@@ -291,7 +270,7 @@ async function onPointerUp(e) {
   }
 }
 
-// ---- Modal helpers ----
+// Modal
 function openModal(){
   buyModal.classList.remove('hidden');
   const c = myReservedSet.size;
@@ -301,7 +280,6 @@ function openModal(){
   sumTotal.textContent = formatUSD(total);
 }
 function closeModal(){ buyModal.classList.add('hidden'); }
-
 buyButton.addEventListener('click', () => {
   if (myReservedSet.size === 0) { alert('Please select blocks first.'); return; }
   document.getElementById('blockIndex').value = Array.from(myReservedSet).join(',');
@@ -318,8 +296,7 @@ async function cancelAndUnlock() {
   if (activeReservationId) {
     try {
       await fetch('/.netlify/functions/unlock', {
-        method:'POST',
-        headers:{'content-type':'application/json'},
+        method:'POST', headers:{'content-type':'application/json'},
         body: JSON.stringify({ reservationId: activeReservationId })
       });
     } catch {}
@@ -352,7 +329,30 @@ fldImageFile.addEventListener('change', async () => {
   }
 });
 
-// Submit -> finalize (uses uploaded file only)
+// Helper: ensure we have a live reservation with current blocks
+async function ensureReservationId() {
+  let rid = activeReservationId || localStorage.getItem('iw_reservation_id') || null;
+  if (myReservedSet.size === 0) return null;
+  const blocks = Array.from(myReservedSet);
+  // If not rid, or to refresh/repair expired, try (re)locking everything
+  try {
+    const r = await fetch('/.netlify/functions/lock', {
+      method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({ op:'add', blocks, reservationId: rid || undefined })
+    });
+    const res = await r.json();
+    if (!r.ok) throw new Error(res.error || ('HTTP '+r.status));
+    rid = res.reservationId || rid;
+    if (rid) { activeReservationId = rid; localStorage.setItem('iw_reservation_id', rid); }
+    myReservedSet = new Set(res.blocks || blocks);
+    return rid;
+  } catch (e) {
+    console.warn('ensureReservationId failed', e);
+    return null;
+  }
+}
+
+// Submit -> finalize (robust with retry)
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   const file = fldImageFile.files && fldImageFile.files[0];
@@ -360,20 +360,36 @@ form.addEventListener('submit', async (e) => {
   const image = await fileToDataURL(file);
   const data = new FormData(form);
   try { await fetch(form.action || '/', { method: 'POST', body: data }); } catch {}
-  try {
-    const payload = {
-      reservationId: activeReservationId,
-      imageUrl: image,                   // data:image/...;base64,...
-      linkUrl: data.get('linkUrl')
-    };
+
+  // 1) Make sure we have a reservation id
+  let rid = activeReservationId || localStorage.getItem('iw_reservation_id') || null;
+  if (!rid) {
+    rid = await ensureReservationId();
+    if (!rid) { alert('Your selection expired. Please reselect your blocks.'); return; }
+  }
+
+  // 2) Try finalize
+  async function doFinalize(ridToUse) {
+    const payload = { reservationId: ridToUse, imageUrl: image, linkUrl: data.get('linkUrl') };
     const r = await fetch('/.netlify/functions/finalize', {
       method:'POST', headers:{'content-type':'application/json'},
       body: JSON.stringify(payload)
     });
     const res = await r.json();
+    return { r, res };
+  }
+
+  try {
+    let { r, res } = await doFinalize(rid);
+    if (r.status === 404 || (res && res.error === 'LOCK_NOT_FOUND_OR_EMPTY')) {
+      // Maybe expired or lost -> relock then retry once
+      const repaired = await ensureReservationId();
+      if (!repaired) throw new Error('Reservation lost. Please reselect your blocks.');
+      ({ r, res } = await doFinalize(repaired));
+    }
     if (!r.ok || !res.ok) throw new Error(res.error || ('HTTP '+r.status));
 
-    // clear selection
+    // success
     activeReservationId = null; localStorage.removeItem('iw_reservation_id');
     myReservedSet = new Set(); localStorage.removeItem('iw_my_blocks');
     closeModal();
@@ -384,7 +400,7 @@ form.addEventListener('submit', async (e) => {
   }
 });
 
-// ---- Init ----
+// Init
 (async () => {
   await loadData();
   buildGridOnce();
