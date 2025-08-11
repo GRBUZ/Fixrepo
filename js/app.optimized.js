@@ -1,7 +1,4 @@
-// Resilient finalize client patch
-// Replaces js/app.optimized.js (includes drag-select, cancel->unlock, upload-only modal)
-// Adds: robust finalize with post-error sold check, submit debouncing, and purchaseCommitted guard.
-
+// FIXED VERSION - Unified submit handler (no conflicts)
 const grid = document.getElementById('pixelGrid');
 const regionsLayer = document.getElementById('regionsLayer');
 const buyButton = document.getElementById('buyButton');
@@ -34,8 +31,12 @@ let myReservedSet = new Set();
 let activeReservationId = localStorage.getItem('iw_reservation_id') || null;
 let purchaseCommitted = false;
 
+// Expose to global for compatibility
 window.myReservedSet = myReservedSet;
 window.activeReservationId = activeReservationId;
+window.loadStatus = loadStatus;
+window.updateBuyLabel = updateBuyLabel;
+window.closeModal = closeModal;
 
 const cells = new Array(GRID_SIZE * GRID_SIZE);
 
@@ -80,7 +81,9 @@ async function loadStatus() {
     const sold = committedSoldSet();
     for (let i = 0; i < cells.length; i++) if (sold.has(i)) setCellState(i, 'sold');
     refreshHeader();
-  } catch {}
+  } catch (e) {
+    console.warn('loadStatus failed:', e);
+  }
 }
 async function loadData() {
   const r = await fetch(`data/purchasedBlocks.json?v=${DATA_VERSION}`, { cache: 'no-store' });
@@ -100,8 +103,8 @@ function buildGridOnce() {
     cells[i] = el;
     frag.appendChild(el);
   }
-  pixelGrid.innerHTML = '';
-  pixelGrid.appendChild(frag);
+  grid.innerHTML = '';
+  grid.appendChild(frag);
   const sold = committedSoldSet();
   for (let i = 0; i < cells.length; i++) setCellState(i, sold.has(i) ? 'sold' : 'free');
   paintRegions();
@@ -158,8 +161,9 @@ async function onCellClick(e) {
       if (!r.ok) throw new Error(res.error || ('HTTP '+r.status));
       if (!res.reservationId) { activeReservationId = null; localStorage.removeItem('iw_reservation_id'); myReservedSet.clear(); }
       else { activeReservationId = res.reservationId; localStorage.setItem('iw_reservation_id', activeReservationId); myReservedSet = new Set(res.blocks || Array.from(myReservedSet)); }
-    } catch {
+    } catch (e) {
       myReservedSet.add(idx); setCellState(idx, 'mine'); updateBuyLabel();
+      console.warn('Remove failed:', e);
     }
     return;
   }
@@ -180,8 +184,9 @@ async function onCellClick(e) {
     localStorage.setItem('iw_reservation_id', activeReservationId);
     myReservedSet = new Set(res.blocks || Array.from(myReservedSet));
     for (const b of myReservedSet) setCellState(b, 'mine');
-  } catch {
+  } catch (e) {
     myReservedSet.delete(idx); setCellState(idx, 'free'); updateBuyLabel();
+    console.warn('Add failed:', e);
   }
   window.myReservedSet = myReservedSet;
   window.activeReservationId = activeReservationId;
@@ -270,9 +275,10 @@ async function onPointerUp(e) {
     localStorage.setItem('iw_reservation_id', activeReservationId);
     myReservedSet = new Set(res.blocks || Array.from(myReservedSet));
     for (const b of myReservedSet) setCellState(b, 'mine');
-  } catch {
+  } catch (e) {
     for (const i of additions) if (myReservedSet.has(i)) { myReservedSet.delete(i); setCellState(i, 'free'); }
     updateBuyLabel();
+    console.warn('Drag add failed:', e);
   }
   window.myReservedSet = myReservedSet;
   window.activeReservationId = activeReservationId;
@@ -288,7 +294,13 @@ function openModal(){
   sumTotal.textContent = formatUSD(total);
   document.getElementById('blockIndex').value = Array.from(myReservedSet).join(',');
 }
-function closeModal(){ buyModal.classList.add('hidden'); }
+function closeModal(){ 
+  buyModal.classList.add('hidden'); 
+  // Reset form to clean state
+  if (form) form.reset();
+  if (imgPreview) imgPreview.src = '';
+}
+
 buyButton.addEventListener('click', () => {
   if (myReservedSet.size === 0) { alert('Please select blocks first.'); return; }
   openModal();
@@ -308,13 +320,16 @@ async function cancelAndUnlock() {
         method:'POST', headers:{'content-type':'application/json'},
         body: JSON.stringify({ reservationId: activeReservationId })
       });
-    } catch {}
+    } catch (e) {
+      console.warn('Unlock failed:', e);
+    }
     activeReservationId = null;
     localStorage.removeItem('iw_reservation_id');
     localStorage.removeItem('iw_my_blocks');
   }
   await loadStatus();
 }
+
 cancelForm?.addEventListener('click', (e) => { e.preventDefault(); cancelAndUnlock(); });
 buyModal?.addEventListener('click', (e) => { if (e.target.matches('[data-close]')) { e.preventDefault(); cancelAndUnlock(); }});
 window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !buyModal.classList.contains('hidden')) { e.preventDefault(); cancelAndUnlock(); }});
@@ -330,7 +345,9 @@ function fileToDataURL(file) {
 }
 fldImageFile?.addEventListener('change', async () => {
   const f = fldImageFile.files && fldImageFile.files[0];
-  imgPreview.src = f ? await fileToDataURL(f) : '';
+  if (imgPreview) {
+    imgPreview.src = f ? await fileToDataURL(f) : '';
+  }
 });
 
 // Utility: after an error, check if the intended blocks are now SOLD with art
@@ -343,71 +360,136 @@ function areMyBlocksSoldWithArt() {
   return wanted.length > 0 && soldCount / wanted.length >= 0.8;
 }
 
-// Submit -> finalize (resilient)
+// FIXED: Single unified submit handler (no conflicts)
 let submitting = false;
-form?.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  if (submitting) return;
-  submitting = true;
-  const prevLabel = submitBtn?.textContent;
-  if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Processing…'; }
-
-  try {
-    const file = fldImageFile.files && fldImageFile.files[0];
-    if (!file) throw new Error('Please upload a profile image.');
-    const image = await fileToDataURL(file);
-    const data = new FormData(form);
-    const blocks = Array.from(myReservedSet);
-    data.set('blockIndex', blocks.join(',')); // also recorded by Netlify Forms
-    try { await fetch(form.action || '/', { method: 'POST', body: data }); } catch {}
-
-    const payload = {
-      reservationId: activeReservationId || localStorage.getItem('iw_reservation_id') || '',
-      imageUrl: image,
-      linkUrl: data.get('linkUrl') || '',
-      name: data.get('name') || '',
-      blocks
-    };
-    let r = await fetch('/.netlify/functions/finalize', {
-      method:'POST', headers:{'content-type':'application/json'},
-      body: JSON.stringify(payload)
-    });
-    let res = await r.json();
-
-    if (!r.ok || !res.ok) {
-      // Force-refresh status; maybe finalize actually succeeded server-side
-      await loadStatus();
-      if (areMyBlocksSoldWithArt()) {
-        // Treat as success
-        purchaseCommitted = true;
-      } else {
-        throw new Error(res.error || ('HTTP '+r.status));
-      }
-    } else {
-      purchaseCommitted = true;
+if (form) {
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    e.stopPropagation(); // Prevent other handlers
+    
+    if (submitting) {
+      console.log('Already submitting, ignoring duplicate submission');
+      return;
+    }
+    
+    submitting = true;
+    const prevLabel = submitBtn?.textContent || 'Confirm';
+    
+    if (submitBtn) { 
+      submitBtn.disabled = true; 
+      submitBtn.textContent = 'Processing…'; 
     }
 
-    // Success path (normal or rescued)
-    activeReservationId = null; localStorage.removeItem('iw_reservation_id');
-    myReservedSet = new Set(); localStorage.removeItem('iw_my_blocks');
-    closeModal();
-    await loadStatus();
-    updateBuyLabel();
-  } catch (e2) {
-    alert('Could not finalize: ' + (e2?.message || e2));
-  } finally {
-    submitting = false;
-    if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = prevLabel || 'Confirm'; }
-  }
-});
+    try {
+      console.log('Starting submission process...');
+      
+      // Validate required fields
+      const file = fldImageFile?.files?.[0];
+      const linkUrl = fldLink?.value?.trim();
+      
+      if (!file) {
+        throw new Error('Please upload a profile image.');
+      }
+      if (!linkUrl) {
+        throw new Error('Please enter your Instagram/TikTok/YouTube link.');
+      }
+      
+      console.log('Converting file to data URL...');
+      const image = await fileToDataURL(file);
+      
+      // Prepare form data for Netlify Forms
+      const data = new FormData(form);
+      const blocks = Array.from(myReservedSet);
+      data.set('blockIndex', blocks.join(','));
+      
+      console.log('Submitting to Netlify Forms...');
+      // Submit to Netlify Forms (best effort, non-blocking)
+      try {
+        await fetch(form.action || '/', { method: 'POST', body: data });
+      } catch (e) {
+        console.warn('Netlify Forms submission failed (non-critical):', e);
+      }
+
+      // Prepare payload for finalize function
+      const payload = {
+        reservationId: activeReservationId || localStorage.getItem('iw_reservation_id') || '',
+        imageUrl: image,
+        linkUrl: linkUrl,
+        name: data.get('name') || '',
+        blocks: blocks
+      };
+      
+      console.log('Calling finalize function...', payload);
+      
+      // Call finalize function
+      const response = await fetch('/.netlify/functions/finalize', {
+        method: 'POST', 
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      
+      const result = await response.json();
+      console.log('Finalize response:', result);
+      
+      if (!response.ok || !result.ok) {
+        console.warn('Finalize failed, checking if blocks were actually sold...');
+        // Force-refresh status; maybe finalize actually succeeded server-side
+        await loadStatus();
+        if (areMyBlocksSoldWithArt()) {
+          console.log('Blocks appear to have been sold successfully despite error');
+          purchaseCommitted = true;
+        } else {
+          throw new Error(result.error || ('HTTP ' + response.status));
+        }
+      } else {
+        console.log('Purchase finalized successfully!');
+        purchaseCommitted = true;
+      }
+
+      // Success path (normal or rescued)
+      activeReservationId = null; 
+      localStorage.removeItem('iw_reservation_id');
+      myReservedSet = new Set(); 
+      localStorage.removeItem('iw_my_blocks');
+      
+      closeModal();
+      await loadStatus();
+      updateBuyLabel();
+      
+      // Update global references
+      window.myReservedSet = myReservedSet;
+      window.activeReservationId = activeReservationId;
+      
+      alert('🎉 Purchase completed successfully! Your pixels are now live on the wall.');
+      
+    } catch (error) {
+      console.error('Finalize error:', error);
+      alert('Could not complete purchase: ' + (error?.message || error));
+    } finally {
+      submitting = false;
+      if (submitBtn) { 
+        submitBtn.disabled = false; 
+        submitBtn.textContent = prevLabel; 
+      }
+    }
+  });
+}
 
 // Init
 (async () => {
-  await loadData();
-  buildGridOnce();
-  await loadStatus();
-  refreshHeader(); updateBuyLabel();
-  setInterval(loadStatus, STATUS_POLL_MS);
+  console.log('Initializing app...');
+  try {
+    await loadData();
+    buildGridOnce();
+    await loadStatus();
+    refreshHeader(); 
+    updateBuyLabel();
+    setInterval(loadStatus, STATUS_POLL_MS);
+    console.log('App initialized successfully');
+  } catch (e) {
+    console.error('Init failed:', e);
+    alert('Failed to initialize app: ' + e.message);
+  }
 })();
 
 // Unlock on exit (only if reservation exists and not purchased)
@@ -417,5 +499,7 @@ window.addEventListener('pagehide', () => {
     const payload = JSON.stringify({ reservationId: activeReservationId });
     const blob = new Blob([payload], { type: 'application/json' });
     navigator.sendBeacon('/.netlify/functions/unlock', blob);
-  } catch {}
+  } catch (e) {
+    console.warn('Beacon unlock failed:', e);
+  }
 });
