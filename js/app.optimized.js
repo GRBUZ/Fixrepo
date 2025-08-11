@@ -1,5 +1,6 @@
-// ONE-FILE CLIENT (includes blocks fallback + drag select + cancel unlock)
-// replaces js/app.optimized.js
+// Resilient finalize client patch
+// Replaces js/app.optimized.js (includes drag-select, cancel->unlock, upload-only modal)
+// Adds: robust finalize with post-error sold check, submit debouncing, and purchaseCommitted guard.
 
 const grid = document.getElementById('pixelGrid');
 const regionsLayer = document.getElementById('regionsLayer');
@@ -10,6 +11,7 @@ const form = document.getElementById('influencerForm');
 const cancelForm = document.getElementById('cancelForm');
 const priceLine = document.getElementById('priceLine');
 const pixelsLeftEl = document.getElementById('pixelsLeft');
+const submitBtn = document.getElementById('submitPurchase');
 
 // Modal fields (lean)
 const fldLink = document.getElementById('fldLink');
@@ -30,6 +32,8 @@ let dynCells = {};
 let pendingSet = new Set();
 let myReservedSet = new Set();
 let activeReservationId = localStorage.getItem('iw_reservation_id') || null;
+let purchaseCommitted = false;
+
 window.myReservedSet = myReservedSet;
 window.activeReservationId = activeReservationId;
 
@@ -101,7 +105,6 @@ function buildGridOnce() {
   const sold = committedSoldSet();
   for (let i = 0; i < cells.length; i++) setCellState(i, sold.has(i) ? 'sold' : 'free');
   paintRegions();
-
   grid.addEventListener('pointerdown', onPointerDown);
 }
 
@@ -291,9 +294,10 @@ buyButton.addEventListener('click', () => {
   openModal();
 });
 
-// Cancel -> unlock
+// Cancel -> unlock (skip if purchase committed)
 async function cancelAndUnlock() {
   closeModal();
+  if (purchaseCommitted) return; // don't unlock if finalized
   if (!activeReservationId && myReservedSet.size === 0) return;
   for (const b of Array.from(myReservedSet)) setCellState(b, 'free');
   myReservedSet.clear();
@@ -329,18 +333,34 @@ fldImageFile?.addEventListener('change', async () => {
   imgPreview.src = f ? await fileToDataURL(f) : '';
 });
 
-// Submit -> finalize (sends blocks too)
+// Utility: after an error, check if the intended blocks are now SOLD with art
+function areMyBlocksSoldWithArt() {
+  const soldKeys = new Set(Object.keys(dynCells).map(k => +k));
+  const wanted = Array.from(myReservedSet);
+  let soldCount = 0;
+  for (const b of wanted) if (soldKeys.has(b)) soldCount++;
+  // consider success if >= 80% of intended are now sold with art
+  return wanted.length > 0 && soldCount / wanted.length >= 0.8;
+}
+
+// Submit -> finalize (resilient)
+let submitting = false;
 form?.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const file = fldImageFile.files && fldImageFile.files[0];
-  if (!file) { alert('Please upload a profile image.'); return; }
-  const image = await fileToDataURL(file);
-  const data = new FormData(form);
-  const blocks = Array.from(myReservedSet);
-  data.set('blockIndex', blocks.join(',')); // also in the Netlify form payload
-  try { await fetch(form.action || '/', { method: 'POST', body: data }); } catch {}
+  if (submitting) return;
+  submitting = true;
+  const prevLabel = submitBtn?.textContent;
+  if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Processing…'; }
 
   try {
+    const file = fldImageFile.files && fldImageFile.files[0];
+    if (!file) throw new Error('Please upload a profile image.');
+    const image = await fileToDataURL(file);
+    const data = new FormData(form);
+    const blocks = Array.from(myReservedSet);
+    data.set('blockIndex', blocks.join(',')); // also recorded by Netlify Forms
+    try { await fetch(form.action || '/', { method: 'POST', body: data }); } catch {}
+
     const payload = {
       reservationId: activeReservationId || localStorage.getItem('iw_reservation_id') || '',
       imageUrl: image,
@@ -348,13 +368,26 @@ form?.addEventListener('submit', async (e) => {
       name: data.get('name') || '',
       blocks
     };
-    const r = await fetch('/.netlify/functions/finalize', {
+    let r = await fetch('/.netlify/functions/finalize', {
       method:'POST', headers:{'content-type':'application/json'},
       body: JSON.stringify(payload)
     });
-    const res = await r.json();
-    if (!r.ok || !res.ok) throw new Error(res.error || ('HTTP '+r.status));
+    let res = await r.json();
 
+    if (!r.ok || !res.ok) {
+      // Force-refresh status; maybe finalize actually succeeded server-side
+      await loadStatus();
+      if (areMyBlocksSoldWithArt()) {
+        // Treat as success
+        purchaseCommitted = true;
+      } else {
+        throw new Error(res.error || ('HTTP '+r.status));
+      }
+    } else {
+      purchaseCommitted = true;
+    }
+
+    // Success path (normal or rescued)
     activeReservationId = null; localStorage.removeItem('iw_reservation_id');
     myReservedSet = new Set(); localStorage.removeItem('iw_my_blocks');
     closeModal();
@@ -362,6 +395,9 @@ form?.addEventListener('submit', async (e) => {
     updateBuyLabel();
   } catch (e2) {
     alert('Could not finalize: ' + (e2?.message || e2));
+  } finally {
+    submitting = false;
+    if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = prevLabel || 'Confirm'; }
   }
 });
 
@@ -374,9 +410,9 @@ form?.addEventListener('submit', async (e) => {
   setInterval(loadStatus, STATUS_POLL_MS);
 })();
 
-// Unlock on exit (only if reservation exists)
+// Unlock on exit (only if reservation exists and not purchased)
 window.addEventListener('pagehide', () => {
-  if (!activeReservationId) return;
+  if (!activeReservationId || purchaseCommitted) return;
   try {
     const payload = JSON.stringify({ reservationId: activeReservationId });
     const blob = new Blob([payload], { type: 'application/json' });
