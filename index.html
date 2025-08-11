@@ -64,16 +64,25 @@
             <input id="fldLink" name="linkUrl" required placeholder="https://instagram.com/your-handle">
           </label>
 
-          
-
-              <label class="cell">
-                <span class="lab">Profile Image</span>
+          <div class="cell span2">
+            <div class="lab">Profile Image</div>
+            <div class="imageInputs">
+              <label class="subcell">
+                <span class="sublab">Image URL</span>
+                <input id="fldImageUrl" name="imageUrl" placeholder="https://...">
+              </label>
+              <div class="or">or</div>
+              <label class="subcell">
+                <span class="sublab">Upload file</span>
                 <input id="fldImageFile" type="file" name="imageFile" accept="image/*">
               </label>
-            
-          
-         
-
+            </div>
+            <div class="previewWrap">
+              <div class="previewTitle">Preview</div>
+              <img id="imgPreview" alt="Image preview" src="" />
+            </div>
+          </div>
+                 
           <div class="cell span2 summary">
             <div>Selected blocks: <strong id="sumBlocks">0</strong> (<span id="sumPixels">0</span> px)</div>
             <div>Total: <strong id="sumTotal">$0.00</strong></div>
