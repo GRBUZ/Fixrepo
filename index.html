@@ -3,31 +3,29 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Influencers Wall</title>
+  <title>Influencers Wall – 1 Million Pixels</title>
   <link rel="stylesheet" href="css/style.css?v=light3">
   <link rel="stylesheet" href="css/pending-sold.css?v=light3">
   <link rel="stylesheet" href="css/overlay-zindex.css?v=2">
-  <link rel="stylesheet" href="css/modal.css?v=2">
+  <link rel="stylesheet" href="css/modal.css?v=3">
 </head>
 <body>
-  <header class="hero">
-    <div class="container hero-row">
-      <div class="brand">
-        <h1>Influencers Wall: 1 million pixels</h1>
-        <p class="tagline">Claim your spot on the ultimate influencer wall.</p>
-      </div>
-      <div class="stats">
+  <header class="topbar">
+    <div class="brand">
+      <div class="title">Influencers Wall: 1 million pixels</div>
+      <div class="subtitle">Claim your spot on the ultimate influencer wall.</div>
+    </div>
+    <div class="meta">
+      <div class="price-wrap">
         <div id="priceLine" class="price">1 Pixel = $1.00</div>
-        <div class="rule">Every 1,000 pixels sold, price +$0.01</div>
-        <div id="pixelsLeft" class="left">1,000,000 pixels left</div>
+        <div id="priceNote" class="note">Price increases by $0.01 every 1,000 pixels sold.</div>
+      </div>
+      <div id="pixelsLeft" class="left">1,000,000 pixels left</div>
+      <div class="actions">
+        <button id="buyButton" class="btn primary">Buy Pixels</button>
+        <button id="contactButton" class="btn">Contact me</button>
       </div>
     </div>
-    <nav class="nav">
-      <div class="container nav-row">
-        <a id="buyButton" class="nav-link" href="javascript:void(0)">Buy Pixels</a>
-        <a id="contactButton" class="nav-link ghost" href="mailto:you@domain.com">Contact Me</a>
-      </div>
-    </nav>
   </header>
 
   <main class="container">
@@ -37,15 +35,12 @@
     </div>
   </main>
 
-  <!-- Polished Modal -->
+  <!-- Minimal, clean modal -->
   <div id="buyModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="buyTitle">
     <div class="modal__backdrop" data-close></div>
     <div class="modal__panel">
       <div class="modal__header">
-        <div>
-          <div class="modal__eyebrow">Checkout</div>
-          <div class="modal__title" id="buyTitle">Complete your purchase</div>
-        </div>
+        <div class="modal__title" id="buyTitle">Buy Pixels</div>
         <button class="modal__close" title="Close" data-close>&times;</button>
       </div>
 
@@ -53,40 +48,21 @@
         <input type="hidden" name="form-name" value="influencer-purchase">
         <input id="blockIndex" type="hidden" name="blockIndex" value="">
 
-        <div class="formgrid">
-          <label class="cell">
-            <span class="lab">Name or Handle</span>
-            <input id="fldName" name="name" required placeholder="@yourhandle">
-          </label>
+        <label class="row">
+          <span class="lab">Link (Instagram/TikTok/YouTube)</span>
+          <input id="fldLink" name="linkUrl" required placeholder="https://instagram.com/your-handle">
+        </label>
 
-          <label class="cell">
-            <span class="lab">Link (Instagram/TikTok/YouTube)</span>
-            <input id="fldLink" name="linkUrl" required placeholder="https://instagram.com/your-handle">
-          </label>
+        <label class="row">
+          <span class="lab">Upload profile image</span>
+          <input id="fldImageFile" type="file" name="imageFile" accept="image/*" required>
+        </label>
 
-        
-          <div class="cell span2">
-            <div class="lab">Profile Image</div>
-            <div class="imageInputs">
-              <label class="subcell">
-                <span class="sublab">Image URL</span>
-                <input id="fldImageUrl" name="imageUrl" placeholder="https://...">
-              </label>
-              <div class="or">or</div>
-              <label class="subcell">
-                <span class="sublab">Upload file</span>
-                <input id="fldImageFile" type="file" name="imageFile" accept="image/*">
-              </label>
-            </div>
-            <div class="previewWrap">
-              <div class="previewTitle">Preview</div>
-              <img id="imgPreview" alt="Image preview" src="" />
-            </div>
-          </div>
-            
-                 
-          <div class="cell span2 summary">
-            <div>Selected blocks: <strong id="sumBlocks">0</strong> (<span id="sumPixels">0</span> px)</div>
+        <div class="previewWrap">
+          <img id="imgPreview" alt="Image preview" />
+          <div class="summary">
+            <div>Blocks: <strong id="sumBlocks">0</strong></div>
+            <div>Pixels: <strong id="sumPixels">0</strong></div>
             <div>Total: <strong id="sumTotal">$0.00</strong></div>
           </div>
         </div>
@@ -95,7 +71,7 @@
           <button type="button" class="btn" data-close id="cancelForm">Cancel</button>
           <button type="submit" class="btn primary" id="submitPurchase">Confirm</button>
         </div>
-        
+        <p class="hint">No payment configured here. You can add PayPal/Stripe later.</p>
       </form>
     </div>
   </div>
@@ -106,7 +82,7 @@
   </footer>
 
   <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
-  <script src="js/app.optimized.js?v=2"></script>
+  <script src="js/app.optimized.js?v=3"></script>
   <script src="js/overlay-fix.js?v=2"></script>
 </body>
 </html>

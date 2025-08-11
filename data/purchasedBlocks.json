@@ -3,8 +3,8 @@
   "regions": [
     {
       "start": 0,
-      "w": 3,
-      "h": 2,
+      "w": 8,
+      "h": 7,
       "imageUrl": "https://picsum.photos/300/200?random=42",
       "linkUrl": "https://example.com"
     }
