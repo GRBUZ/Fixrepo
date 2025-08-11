@@ -1,5 +1,5 @@
-// JS patch: robust finalize (auto re-lock if LOCK_NOT_FOUND)
-// Drop-in replacement for js/app.optimized.js (same public API + drag select etc.)
+// ONE-FILE CLIENT (includes blocks fallback + drag select + cancel unlock)
+// replaces js/app.optimized.js
 
 const grid = document.getElementById('pixelGrid');
 const regionsLayer = document.getElementById('regionsLayer');
@@ -11,7 +11,7 @@ const cancelForm = document.getElementById('cancelForm');
 const priceLine = document.getElementById('priceLine');
 const pixelsLeftEl = document.getElementById('pixelsLeft');
 
-// Modal fields (reduced)
+// Modal fields (lean)
 const fldLink = document.getElementById('fldLink');
 const fldImageFile = document.getElementById('fldImageFile');
 const imgPreview = document.getElementById('imgPreview');
@@ -30,6 +30,8 @@ let dynCells = {};
 let pendingSet = new Set();
 let myReservedSet = new Set();
 let activeReservationId = localStorage.getItem('iw_reservation_id') || null;
+window.myReservedSet = myReservedSet;
+window.activeReservationId = activeReservationId;
 
 const cells = new Array(GRID_SIZE * GRID_SIZE);
 
@@ -100,7 +102,6 @@ function buildGridOnce() {
   for (let i = 0; i < cells.length; i++) setCellState(i, sold.has(i) ? 'sold' : 'free');
   paintRegions();
 
-  // Drag-select handlers
   grid.addEventListener('pointerdown', onPointerDown);
 }
 
@@ -179,6 +180,8 @@ async function onCellClick(e) {
   } catch {
     myReservedSet.delete(idx); setCellState(idx, 'free'); updateBuyLabel();
   }
+  window.myReservedSet = myReservedSet;
+  window.activeReservationId = activeReservationId;
 }
 
 /* DRAG selection */
@@ -268,9 +271,11 @@ async function onPointerUp(e) {
     for (const i of additions) if (myReservedSet.has(i)) { myReservedSet.delete(i); setCellState(i, 'free'); }
     updateBuyLabel();
   }
+  window.myReservedSet = myReservedSet;
+  window.activeReservationId = activeReservationId;
 }
 
-// Modal
+/* Modal */
 function openModal(){
   buyModal.classList.remove('hidden');
   const c = myReservedSet.size;
@@ -278,11 +283,11 @@ function openModal(){
   sumPixels.textContent = c * 100;
   const total = Math.round(getCurrentBlockPrice() * c * 100) / 100;
   sumTotal.textContent = formatUSD(total);
+  document.getElementById('blockIndex').value = Array.from(myReservedSet).join(',');
 }
 function closeModal(){ buyModal.classList.add('hidden'); }
 buyButton.addEventListener('click', () => {
   if (myReservedSet.size === 0) { alert('Please select blocks first.'); return; }
-  document.getElementById('blockIndex').value = Array.from(myReservedSet).join(',');
   openModal();
 });
 
@@ -306,11 +311,11 @@ async function cancelAndUnlock() {
   }
   await loadStatus();
 }
-cancelForm.addEventListener('click', (e) => { e.preventDefault(); cancelAndUnlock(); });
-buyModal.addEventListener('click', (e) => { if (e.target.matches('[data-close]')) { e.preventDefault(); cancelAndUnlock(); }});
+cancelForm?.addEventListener('click', (e) => { e.preventDefault(); cancelAndUnlock(); });
+buyModal?.addEventListener('click', (e) => { if (e.target.matches('[data-close]')) { e.preventDefault(); cancelAndUnlock(); }});
 window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !buyModal.classList.contains('hidden')) { e.preventDefault(); cancelAndUnlock(); }});
 
-// Upload preview (file required)
+// Upload preview
 function fileToDataURL(file) {
   return new Promise((resolve, reject) => {
     const fr = new FileReader();
@@ -319,77 +324,37 @@ function fileToDataURL(file) {
     fr.readAsDataURL(file);
   });
 }
-fldImageFile.addEventListener('change', async () => {
+fldImageFile?.addEventListener('change', async () => {
   const f = fldImageFile.files && fldImageFile.files[0];
-  if (f) {
-    const url = await fileToDataURL(f);
-    imgPreview.src = url;
-  } else {
-    imgPreview.src = '';
-  }
+  imgPreview.src = f ? await fileToDataURL(f) : '';
 });
 
-// Helper: ensure we have a live reservation with current blocks
-async function ensureReservationId() {
-  let rid = activeReservationId || localStorage.getItem('iw_reservation_id') || null;
-  if (myReservedSet.size === 0) return null;
-  const blocks = Array.from(myReservedSet);
-  // If not rid, or to refresh/repair expired, try (re)locking everything
-  try {
-    const r = await fetch('/.netlify/functions/lock', {
-      method:'POST', headers:{'content-type':'application/json'},
-      body: JSON.stringify({ op:'add', blocks, reservationId: rid || undefined })
-    });
-    const res = await r.json();
-    if (!r.ok) throw new Error(res.error || ('HTTP '+r.status));
-    rid = res.reservationId || rid;
-    if (rid) { activeReservationId = rid; localStorage.setItem('iw_reservation_id', rid); }
-    myReservedSet = new Set(res.blocks || blocks);
-    return rid;
-  } catch (e) {
-    console.warn('ensureReservationId failed', e);
-    return null;
-  }
-}
-
-// Submit -> finalize (robust with retry)
-form.addEventListener('submit', async (e) => {
+// Submit -> finalize (sends blocks too)
+form?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const file = fldImageFile.files && fldImageFile.files[0];
   if (!file) { alert('Please upload a profile image.'); return; }
   const image = await fileToDataURL(file);
   const data = new FormData(form);
+  const blocks = Array.from(myReservedSet);
+  data.set('blockIndex', blocks.join(',')); // also in the Netlify form payload
   try { await fetch(form.action || '/', { method: 'POST', body: data }); } catch {}
 
-  // 1) Make sure we have a reservation id
-  let rid = activeReservationId || localStorage.getItem('iw_reservation_id') || null;
-  if (!rid) {
-    rid = await ensureReservationId();
-    if (!rid) { alert('Your selection expired. Please reselect your blocks.'); return; }
-  }
-
-  // 2) Try finalize
-  async function doFinalize(ridToUse) {
-    const payload = { reservationId: ridToUse, imageUrl: image, linkUrl: data.get('linkUrl') };
+  try {
+    const payload = {
+      reservationId: activeReservationId || localStorage.getItem('iw_reservation_id') || '',
+      imageUrl: image,
+      linkUrl: data.get('linkUrl') || '',
+      name: data.get('name') || '',
+      blocks
+    };
     const r = await fetch('/.netlify/functions/finalize', {
       method:'POST', headers:{'content-type':'application/json'},
       body: JSON.stringify(payload)
     });
     const res = await r.json();
-    return { r, res };
-  }
-
-  try {
-    let { r, res } = await doFinalize(rid);
-    if (r.status === 404 || (res && res.error === 'LOCK_NOT_FOUND_OR_EMPTY')) {
-      // Maybe expired or lost -> relock then retry once
-      const repaired = await ensureReservationId();
-      if (!repaired) throw new Error('Reservation lost. Please reselect your blocks.');
-      ({ r, res } = await doFinalize(repaired));
-    }
     if (!r.ok || !res.ok) throw new Error(res.error || ('HTTP '+r.status));
 
-    // success
     activeReservationId = null; localStorage.removeItem('iw_reservation_id');
     myReservedSet = new Set(); localStorage.removeItem('iw_my_blocks');
     closeModal();
