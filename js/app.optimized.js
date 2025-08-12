@@ -188,6 +188,7 @@ async function onCellClick(e) {
     console.log('➖ Removing block:', idx);
     setCellState(idx, 'free'); 
     myReservedSet.delete(idx); 
+    localStorage.setItem('iw_my_blocks', JSON.stringify(Array.from(myReservedSet)));
     updateBuyLabel();
     debugState();
     
@@ -205,17 +206,20 @@ async function onCellClick(e) {
         console.log('🗑️ No reservation left, clearing everything');
         activeReservationId = null; 
         localStorage.removeItem('iw_reservation_id'); 
-        myReservedSet.clear(); 
+        myReservedSet.clear();
+        localStorage.removeItem('iw_my_blocks');
       } else { 
         console.log('✅ Updated reservation:', res.reservationId);
         activeReservationId = res.reservationId; 
         localStorage.setItem('iw_reservation_id', activeReservationId); 
         myReservedSet = new Set(res.blocks || Array.from(myReservedSet)); 
+        localStorage.setItem('iw_my_blocks', JSON.stringify(Array.from(myReservedSet)));
       }
     } catch (e) {
       console.error('❌ Remove failed:', e);
       myReservedSet.add(idx); 
       setCellState(idx, 'mine'); 
+      localStorage.setItem('iw_my_blocks', JSON.stringify(Array.from(myReservedSet)));
       updateBuyLabel();
     }
     
@@ -234,6 +238,7 @@ async function onCellClick(e) {
   console.log('➕ Adding block:', idx);
   setCellState(idx, 'mine'); 
   myReservedSet.add(idx); 
+  localStorage.setItem('iw_my_blocks', JSON.stringify(Array.from(myReservedSet)));
   updateBuyLabel();
   debugState();
   
@@ -251,6 +256,7 @@ async function onCellClick(e) {
         console.log('⚠️ Conflict, block taken by someone else');
         myReservedSet.delete(idx); 
         setCellState(idx, 'pending'); 
+        localStorage.setItem('iw_my_blocks', JSON.stringify(Array.from(myReservedSet)));
         updateBuyLabel(); 
         return; 
       }
@@ -261,6 +267,7 @@ async function onCellClick(e) {
     activeReservationId = res.reservationId || activeReservationId;
     localStorage.setItem('iw_reservation_id', activeReservationId);
     myReservedSet = new Set(res.blocks || Array.from(myReservedSet));
+    localStorage.setItem('iw_my_blocks', JSON.stringify(Array.from(myReservedSet)));
     
     console.log('🔄 Updating visual state...');
     for (const b of myReservedSet) setCellState(b, 'mine');
@@ -269,6 +276,7 @@ async function onCellClick(e) {
     console.error('❌ Add failed:', e);
     myReservedSet.delete(idx); 
     setCellState(idx, 'free'); 
+    localStorage.setItem('iw_my_blocks', JSON.stringify(Array.from(myReservedSet)));
     updateBuyLabel();
   }
   
@@ -348,6 +356,7 @@ async function onPointerUp(e) {
   
   if (additions.length === 0) return;
   for (const i of additions) { setCellState(i, 'mine'); myReservedSet.add(i); }
+  localStorage.setItem('iw_my_blocks', JSON.stringify(Array.from(myReservedSet)));
   updateBuyLabel();
   debugState();
   
@@ -361,15 +370,18 @@ async function onPointerUp(e) {
     
     if (!r.ok) {
       for (const i of additions) if (myReservedSet.has(i)) { myReservedSet.delete(i); setCellState(i, 'free'); }
+      localStorage.setItem('iw_my_blocks', JSON.stringify(Array.from(myReservedSet)));
       updateBuyLabel();
       return;
     }
     activeReservationId = res.reservationId || activeReservationId;
     localStorage.setItem('iw_reservation_id', activeReservationId);
     myReservedSet = new Set(res.blocks || Array.from(myReservedSet));
+    localStorage.setItem('iw_my_blocks', JSON.stringify(Array.from(myReservedSet)));
     for (const b of myReservedSet) setCellState(b, 'mine');
   } catch (e) {
     for (const i of additions) if (myReservedSet.has(i)) { myReservedSet.delete(i); setCellState(i, 'free'); }
+    localStorage.setItem('iw_my_blocks', JSON.stringify(Array.from(myReservedSet)));
     updateBuyLabel();
     console.warn('❌ Drag add failed:', e);
   }
@@ -383,29 +395,52 @@ function openModal(){
   console.log('📱 Opening modal...');
   debugState();
   
+  // Verify we have blocks reserved
+  if (myReservedSet.size === 0) {
+    console.log('❌ No blocks selected when opening modal');
+    alert('Please select blocks first.');
+    return;
+  }
+  
+  // Verify we have a reservation ID
+  if (!activeReservationId) {
+    console.log('⚠️ No reservation ID found, this is unexpected');
+    // Don't block the modal, the blocks might still be valid
+  }
+  
   buyModal.classList.remove('hidden');
   const c = myReservedSet.size;
   
   console.log('📊 Modal data:', {
     blocks: c,
     pixels: c * 100,
-    price: getCurrentBlockPrice() * c
+    price: getCurrentBlockPrice() * c,
+    reservationId: activeReservationId,
+    blocksArray: Array.from(myReservedSet)
   });
   
   sumBlocks.textContent = c;
   sumPixels.textContent = c * 100;
   const total = Math.round(getCurrentBlockPrice() * c * 100) / 100;
   sumTotal.textContent = formatUSD(total);
-  document.getElementById('blockIndex').value = Array.from(myReservedSet).join(',');
+  
+  // Set the hidden field with blocks
+  const blockIndexField = document.getElementById('blockIndex');
+  if (blockIndexField) {
+    blockIndexField.value = Array.from(myReservedSet).join(',');
+    console.log('✅ Set blockIndex field:', blockIndexField.value);
+  }
   
   console.log('✅ Modal opened successfully');
 }
 
 function closeModal(){ 
+  console.log('🔒 Closing modal (NOT unlocking blocks)');
   buyModal.classList.add('hidden'); 
   // Reset form to clean state
   if (form) form.reset();
   if (imgPreview) imgPreview.src = '';
+  // NOTE: We do NOT clear the blocks here - they stay reserved
 }
 
 // Buy button with DEBUG
@@ -427,17 +462,27 @@ buyButton.addEventListener('click', () => {
 async function cancelAndUnlock() {
   console.log('❌ Canceling and unlocking...');
   closeModal();
-  if (purchaseCommitted) return;
-  if (!activeReservationId && myReservedSet.size === 0) return;
+  if (purchaseCommitted) {
+    console.log('✅ Purchase committed, keeping blocks');
+    return;
+  }
+  if (!activeReservationId && myReservedSet.size === 0) {
+    console.log('⚠️ Nothing to unlock');
+    return;
+  }
+  
+  console.log('🔓 Unlocking', myReservedSet.size, 'blocks');
   for (const b of Array.from(myReservedSet)) setCellState(b, 'free');
   myReservedSet.clear();
   updateBuyLabel();
+  
   if (activeReservationId) {
     try {
       await fetch('/.netlify/functions/unlock', {
         method:'POST', headers:{'content-type':'application/json'},
         body: JSON.stringify({ reservationId: activeReservationId })
       });
+      console.log('✅ Unlock request sent');
     } catch (e) {
       console.warn('❌ Unlock failed:', e);
     }
@@ -445,7 +490,10 @@ async function cancelAndUnlock() {
     localStorage.removeItem('iw_reservation_id');
     localStorage.removeItem('iw_my_blocks');
   }
+  
   await loadStatus();
+  window.myReservedSet = myReservedSet;
+  window.activeReservationId = activeReservationId;
   debugState();
 }
 
@@ -539,7 +587,8 @@ if (form) {
         imageUrl: image,
         linkUrl: linkUrl,
         name: '',
-        blocks: blocks
+        blocks: blocks,
+        blockIndex: blocks.join(',')  // Add this for backwards compatibility
       };
       
       console.log('🚀 Sending payload with', blocks.length, 'blocks');
@@ -609,10 +658,39 @@ window.testSelection = function() {
 // Init
 (async () => {
   console.log('🚀 Initializing app...');
+  
+  // Restore saved state first
+  try {
+    const savedBlocks = localStorage.getItem('iw_my_blocks');
+    const savedReservation = localStorage.getItem('iw_reservation_id');
+    
+    if (savedBlocks) {
+      const parsed = JSON.parse(savedBlocks);
+      if (Array.isArray(parsed)) {
+        myReservedSet = new Set(parsed.map(n => +n).filter(Number.isInteger));
+        console.log('📦 Restored', myReservedSet.size, 'blocks from localStorage');
+      }
+    }
+    
+    if (savedReservation) {
+      activeReservationId = savedReservation;
+      console.log('🔑 Restored reservation ID:', activeReservationId.substring(0, 8) + '...');
+    }
+    
+    window.myReservedSet = myReservedSet;
+    window.activeReservationId = activeReservationId;
+  } catch (e) {
+    console.warn('⚠️ Failed to restore saved state:', e);
+  }
+  
   try {
     await loadData();
     buildGridOnce();
     await loadStatus();
+    
+    // Display restored blocks
+    for (const b of myReservedSet) setCellState(b, 'mine');
+    
     refreshHeader(); 
     updateBuyLabel();
     setInterval(loadStatus, STATUS_POLL_MS);
