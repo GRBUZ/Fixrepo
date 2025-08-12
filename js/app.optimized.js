@@ -91,16 +91,46 @@ async function loadStatus() {
     
     const old = pendingSet;
     const next = new Set(s.pending || []);
-    for (const b of next) if (!old.has(b) && !myReservedSet.has(b)) setCellState(b, 'pending');
-    for (const b of old) if (!next.has(b) && !myReservedSet.has(b)) setCellState(b, 'free');
+    
+    // Add our reserved blocks to the pending set
+    for (const b of myReservedSet) {
+      next.add(b);
+    }
+    
+    // Update visual state for other users' pending blocks
+    for (const b of next) {
+      if (!old.has(b) && !myReservedSet.has(b)) {
+        setCellState(b, 'pending');
+      }
+    }
+    
+    // Clear blocks that are no longer pending (but not ours)
+    for (const b of old) {
+      if (!next.has(b) && !myReservedSet.has(b)) {
+        setCellState(b, 'free');
+      }
+    }
+    
     pendingSet = next;
     dynCells = s.artCells || {};
     paintRegions();
+    
+    // Update sold blocks
     const sold = committedSoldSet();
-    for (let i = 0; i < cells.length; i++) if (sold.has(i)) setCellState(i, 'sold');
+    for (let i = 0; i < cells.length; i++) {
+      if (sold.has(i)) {
+        setCellState(i, 'sold');
+      }
+    }
+    
+    // CRITICAL: Always re-apply our reserved blocks LAST
+    for (const b of myReservedSet) {
+      setCellState(b, 'mine');
+    }
+    
     refreshHeader();
     
-    console.log('✅ Status loaded successfully');
+    console.log('✅ Status loaded, preserved', myReservedSet.size, 'reserved blocks');
   } catch (e) {
     console.warn('❌ loadStatus failed:', e);
   }
