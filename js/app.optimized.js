@@ -1,4 +1,4 @@
-// FIXED VERSION - Unified submit handler (no conflicts)
+// Complete app.optimized.js with extensive debugging
 const grid = document.getElementById('pixelGrid');
 const regionsLayer = document.getElementById('regionsLayer');
 const buyButton = document.getElementById('buyButton');
@@ -31,12 +31,26 @@ let myReservedSet = new Set();
 let activeReservationId = localStorage.getItem('iw_reservation_id') || null;
 let purchaseCommitted = false;
 
+// Debug function
+function debugState() {
+  console.log('=== DEBUG STATE ===');
+  console.log('myReservedSet size:', myReservedSet.size);
+  console.log('myReservedSet contents:', Array.from(myReservedSet));
+  console.log('activeReservationId:', activeReservationId);
+  console.log('pendingSet size:', pendingSet.size);
+  console.log('purchaseCommitted:', purchaseCommitted);
+  console.log('localStorage reservation:', localStorage.getItem('iw_reservation_id'));
+  console.log('localStorage blocks:', localStorage.getItem('iw_my_blocks'));
+  console.log('===================');
+}
+
 // Expose to global for compatibility
 window.myReservedSet = myReservedSet;
 window.activeReservationId = activeReservationId;
 window.loadStatus = loadStatus;
 window.updateBuyLabel = updateBuyLabel;
 window.closeModal = closeModal;
+window.debugState = debugState;
 
 const cells = new Array(GRID_SIZE * GRID_SIZE);
 
@@ -64,13 +78,17 @@ function refreshHeader() {
 function updateBuyLabel() {
   const c = myReservedSet.size;
   buyButton.textContent = c === 0 ? 'Buy Pixels' : `Buy ${c} block${c>1?'s':''} (${c*100} px) – ${formatUSD(getCurrentBlockPrice()*c)}`;
+  console.log('🔄 Buy button updated:', buyButton.textContent);
 }
 
 /* Data */
 async function loadStatus() {
   try {
+    console.log('📡 Loading status...');
     const r = await fetch('/.netlify/functions/status', { cache: 'no-store' });
     const s = await r.json();
+    console.log('📡 Status response:', s);
+    
     const old = pendingSet;
     const next = new Set(s.pending || []);
     for (const b of next) if (!old.has(b) && !myReservedSet.has(b)) setCellState(b, 'pending');
@@ -81,34 +99,48 @@ async function loadStatus() {
     const sold = committedSoldSet();
     for (let i = 0; i < cells.length; i++) if (sold.has(i)) setCellState(i, 'sold');
     refreshHeader();
+    
+    console.log('✅ Status loaded successfully');
   } catch (e) {
-    console.warn('loadStatus failed:', e);
+    console.warn('❌ loadStatus failed:', e);
   }
 }
+
 async function loadData() {
-  const r = await fetch(`data/purchasedBlocks.json?v=${DATA_VERSION}`, { cache: 'no-store' });
-  if (!r.ok) throw new Error(`HTTP ${r.status} fetching purchasedBlocks.json`);
-  const data = await r.json();
-  if (data && (data.cells || data.regions)) { cellsMap = data.cells || {}; regions = data.regions || []; }
-  else { cellsMap = data || {}; regions = []; }
+  try {
+    console.log('📄 Loading data...');
+    const r = await fetch(`data/purchasedBlocks.json?v=${DATA_VERSION}`, { cache: 'no-store' });
+    if (!r.ok) throw new Error(`HTTP ${r.status} fetching purchasedBlocks.json`);
+    const data = await r.json();
+    if (data && (data.cells || data.regions)) { cellsMap = data.cells || {}; regions = data.regions || []; }
+    else { cellsMap = data || {}; regions = []; }
+    console.log('✅ Data loaded successfully');
+  } catch (e) {
+    console.error('❌ loadData failed:', e);
+    throw e;
+  }
 }
 
 /* Grid */
 function buildGridOnce() {
+  console.log('🏗️ Building grid...');
   const frag = document.createDocumentFragment();
   for (let i = 0; i < GRID_SIZE * GRID_SIZE; i++) {
     const el = document.createElement('div');
-    el.className = 'block'; el.dataset.index = i;
+    el.className = 'block'; 
+    el.dataset.index = i;
     el.addEventListener('click', onCellClick, { passive: true });
     cells[i] = el;
     frag.appendChild(el);
   }
   grid.innerHTML = '';
   grid.appendChild(frag);
+  
   const sold = committedSoldSet();
   for (let i = 0; i < cells.length; i++) setCellState(i, sold.has(i) ? 'sold' : 'free');
   paintRegions();
   grid.addEventListener('pointerdown', onPointerDown);
+  console.log('✅ Grid built with', cells.length, 'cells');
 }
 
 function paintRegions() {
@@ -147,49 +179,102 @@ function setCellState(idx, state) {
   if (state === 'preview') { el.classList.add('preview'); return; }
 }
 
-/* Click selection */
+/* Click selection with DEBUG */
 async function onCellClick(e) {
   const idx = parseInt(e.currentTarget.dataset.index);
+  console.log('🖱️ Cell clicked:', idx);
+  
   if (myReservedSet.has(idx)) {
-    setCellState(idx, 'free'); myReservedSet.delete(idx); updateBuyLabel();
+    console.log('➖ Removing block:', idx);
+    setCellState(idx, 'free'); 
+    myReservedSet.delete(idx); 
+    updateBuyLabel();
+    debugState();
+    
     try {
       const r = await fetch('/.netlify/functions/lock', {
         method:'POST', headers:{'content-type':'application/json'},
         body: JSON.stringify({ op:'remove', blocks:[idx], reservationId: activeReservationId })
       });
       const res = await r.json();
+      console.log('🔓 Remove response:', res);
+      
       if (!r.ok) throw new Error(res.error || ('HTTP '+r.status));
-      if (!res.reservationId) { activeReservationId = null; localStorage.removeItem('iw_reservation_id'); myReservedSet.clear(); }
-      else { activeReservationId = res.reservationId; localStorage.setItem('iw_reservation_id', activeReservationId); myReservedSet = new Set(res.blocks || Array.from(myReservedSet)); }
+      
+      if (!res.reservationId) { 
+        console.log('🗑️ No reservation left, clearing everything');
+        activeReservationId = null; 
+        localStorage.removeItem('iw_reservation_id'); 
+        myReservedSet.clear(); 
+      } else { 
+        console.log('✅ Updated reservation:', res.reservationId);
+        activeReservationId = res.reservationId; 
+        localStorage.setItem('iw_reservation_id', activeReservationId); 
+        myReservedSet = new Set(res.blocks || Array.from(myReservedSet)); 
+      }
     } catch (e) {
-      myReservedSet.add(idx); setCellState(idx, 'mine'); updateBuyLabel();
-      console.warn('Remove failed:', e);
+      console.error('❌ Remove failed:', e);
+      myReservedSet.add(idx); 
+      setCellState(idx, 'mine'); 
+      updateBuyLabel();
     }
+    
+    window.myReservedSet = myReservedSet;
+    window.activeReservationId = activeReservationId;
+    debugState();
     return;
   }
+  
   const sold = committedSoldSet();
-  if (pendingSet.has(idx) || sold.has(idx)) return;
-  setCellState(idx, 'mine'); myReservedSet.add(idx); updateBuyLabel();
+  if (pendingSet.has(idx) || sold.has(idx)) {
+    console.log('❌ Block unavailable:', idx, { pending: pendingSet.has(idx), sold: sold.has(idx) });
+    return;
+  }
+  
+  console.log('➕ Adding block:', idx);
+  setCellState(idx, 'mine'); 
+  myReservedSet.add(idx); 
+  updateBuyLabel();
+  debugState();
+  
   try {
+    console.log('🔒 Sending lock request...');
     const r = await fetch('/.netlify/functions/lock', {
       method:'POST', headers:{'content-type':'application/json'},
       body: JSON.stringify({ op:'add', blocks:[idx], reservationId: activeReservationId || undefined })
     });
     const res = await r.json();
+    console.log('🔒 Lock response:', res);
+    
     if (!r.ok) {
-      if (r.status === 409) { myReservedSet.delete(idx); setCellState(idx, 'pending'); updateBuyLabel(); return; }
+      if (r.status === 409) { 
+        console.log('⚠️ Conflict, block taken by someone else');
+        myReservedSet.delete(idx); 
+        setCellState(idx, 'pending'); 
+        updateBuyLabel(); 
+        return; 
+      }
       throw new Error(res.error || ('HTTP '+r.status));
     }
+    
+    console.log('✅ Lock successful');
     activeReservationId = res.reservationId || activeReservationId;
     localStorage.setItem('iw_reservation_id', activeReservationId);
     myReservedSet = new Set(res.blocks || Array.from(myReservedSet));
+    
+    console.log('🔄 Updating visual state...');
     for (const b of myReservedSet) setCellState(b, 'mine');
+    
   } catch (e) {
-    myReservedSet.delete(idx); setCellState(idx, 'free'); updateBuyLabel();
-    console.warn('Add failed:', e);
+    console.error('❌ Add failed:', e);
+    myReservedSet.delete(idx); 
+    setCellState(idx, 'free'); 
+    updateBuyLabel();
   }
+  
   window.myReservedSet = myReservedSet;
   window.activeReservationId = activeReservationId;
+  debugState();
 }
 
 /* DRAG selection */
@@ -232,6 +317,7 @@ function onPointerDown(e) {
   if (!(e.target && e.target.classList.contains('block'))) return;
   const idx = parseInt(e.target.dataset.index);
   if (Number.isNaN(idx)) return;
+  console.log('🖱️ Drag start:', idx);
   isDragging = true;
   dragStart = idx;
   lastPoint = { x: e.clientX, y: e.clientY };
@@ -257,15 +343,22 @@ async function onPointerUp(e) {
   const additions = Array.from(previewSet).filter(i => !myReservedSet.has(i));
   for (const i of previewSet) setCellState(i, 'free');
   previewSet.clear();
+  
+  console.log('🖱️ Drag end, adding blocks:', additions);
+  
   if (additions.length === 0) return;
   for (const i of additions) { setCellState(i, 'mine'); myReservedSet.add(i); }
   updateBuyLabel();
+  debugState();
+  
   try {
     const r = await fetch('/.netlify/functions/lock', {
       method:'POST', headers:{'content-type':'application/json'},
       body: JSON.stringify({ op:'add', blocks: additions, reservationId: activeReservationId || undefined })
     });
     const res = await r.json();
+    console.log('🔒 Drag lock response:', res);
+    
     if (!r.ok) {
       for (const i of additions) if (myReservedSet.has(i)) { myReservedSet.delete(i); setCellState(i, 'free'); }
       updateBuyLabel();
@@ -278,22 +371,36 @@ async function onPointerUp(e) {
   } catch (e) {
     for (const i of additions) if (myReservedSet.has(i)) { myReservedSet.delete(i); setCellState(i, 'free'); }
     updateBuyLabel();
-    console.warn('Drag add failed:', e);
+    console.warn('❌ Drag add failed:', e);
   }
   window.myReservedSet = myReservedSet;
   window.activeReservationId = activeReservationId;
+  debugState();
 }
 
 /* Modal */
 function openModal(){
+  console.log('📱 Opening modal...');
+  debugState();
+  
   buyModal.classList.remove('hidden');
   const c = myReservedSet.size;
+  
+  console.log('📊 Modal data:', {
+    blocks: c,
+    pixels: c * 100,
+    price: getCurrentBlockPrice() * c
+  });
+  
   sumBlocks.textContent = c;
   sumPixels.textContent = c * 100;
   const total = Math.round(getCurrentBlockPrice() * c * 100) / 100;
   sumTotal.textContent = formatUSD(total);
   document.getElementById('blockIndex').value = Array.from(myReservedSet).join(',');
+  
+  console.log('✅ Modal opened successfully');
 }
+
 function closeModal(){ 
   buyModal.classList.add('hidden'); 
   // Reset form to clean state
@@ -301,15 +408,26 @@ function closeModal(){
   if (imgPreview) imgPreview.src = '';
 }
 
+// Buy button with DEBUG
 buyButton.addEventListener('click', () => {
-  if (myReservedSet.size === 0) { alert('Please select blocks first.'); return; }
+  console.log('🛒 Buy button clicked');
+  debugState();
+  
+  if (myReservedSet.size === 0) { 
+    alert('Please select blocks first.'); 
+    console.log('❌ No blocks selected');
+    return; 
+  }
+  
+  console.log('✅ Opening modal with', myReservedSet.size, 'blocks');
   openModal();
 });
 
 // Cancel -> unlock (skip if purchase committed)
 async function cancelAndUnlock() {
+  console.log('❌ Canceling and unlocking...');
   closeModal();
-  if (purchaseCommitted) return; // don't unlock if finalized
+  if (purchaseCommitted) return;
   if (!activeReservationId && myReservedSet.size === 0) return;
   for (const b of Array.from(myReservedSet)) setCellState(b, 'free');
   myReservedSet.clear();
@@ -321,13 +439,14 @@ async function cancelAndUnlock() {
         body: JSON.stringify({ reservationId: activeReservationId })
       });
     } catch (e) {
-      console.warn('Unlock failed:', e);
+      console.warn('❌ Unlock failed:', e);
     }
     activeReservationId = null;
     localStorage.removeItem('iw_reservation_id');
     localStorage.removeItem('iw_my_blocks');
   }
   await loadStatus();
+  debugState();
 }
 
 cancelForm?.addEventListener('click', (e) => { e.preventDefault(); cancelAndUnlock(); });
@@ -356,21 +475,18 @@ function areMyBlocksSoldWithArt() {
   const wanted = Array.from(myReservedSet);
   let soldCount = 0;
   for (const b of wanted) if (soldKeys.has(b)) soldCount++;
-  // consider success if >= 80% of intended are now sold with art
   return wanted.length > 0 && soldCount / wanted.length >= 0.8;
 }
 
-// FIXED: Single unified submit handler (no conflicts)
+// FORM SUBMISSION with extensive DEBUG
 let submitting = false;
-// DEBUG CLIENT - Add this to your app.optimized.js in the submit handler
-
-// Replace the submit event listener with this debug version:
 if (form) {
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     e.stopPropagation();
     
     console.log('=== FORM SUBMISSION START ===');
+    debugState();
     
     if (submitting) {
       console.log('❌ Already submitting, ignoring');
@@ -386,6 +502,14 @@ if (form) {
     }
 
     try {
+      // Check blocks FIRST
+      console.log('🔍 Checking blocks before validation...');
+      debugState();
+      
+      if (myReservedSet.size === 0) {
+        throw new Error('No blocks selected.');
+      }
+      
       // Validate required fields
       const file = fldImageFile?.files?.[0];
       const linkUrl = fldLink?.value?.trim();
@@ -393,8 +517,7 @@ if (form) {
       console.log('📋 Validation:', { 
         hasFile: !!file, 
         linkUrl, 
-        selectedBlocks: myReservedSet.size,
-        reservationId: activeReservationId
+        selectedBlocks: myReservedSet.size
       });
       
       if (!file) {
@@ -403,69 +526,49 @@ if (form) {
       if (!linkUrl) {
         throw new Error('Please enter your Instagram/TikTok/YouTube link.');
       }
-      if (myReservedSet.size === 0) {
-        throw new Error('No blocks selected.');
-      }
       
-      console.log('✅ Validation passed');
-      console.log('📄 Converting file to data URL...');
+      console.log('✅ All validation passed');
+      console.log('📄 Converting file...');
       const image = await fileToDataURL(file);
-      console.log('✅ File converted, length:', image.length);
       
-      // Prepare payload
       const blocks = Array.from(myReservedSet);
+      console.log('📦 Final blocks array:', blocks);
+      
       const payload = {
         reservationId: activeReservationId || localStorage.getItem('iw_reservation_id') || '',
         imageUrl: image,
         linkUrl: linkUrl,
-        name: fldLink.dataset.name || '', // if you have a name field
+        name: '',
         blocks: blocks
       };
       
-      console.log('🚀 Sending to finalize:', {
-        reservationId: payload.reservationId.substring(0, 8) + '...',
-        linkUrl: payload.linkUrl,
-        imageUrlLength: payload.imageUrl.length,
-        blocksCount: payload.blocks.length,
-        firstFewBlocks: payload.blocks.slice(0, 5)
-      });
+      console.log('🚀 Sending payload with', blocks.length, 'blocks');
       
-      // Call finalize function
       const response = await fetch('/.netlify/functions/finalize', {
         method: 'POST', 
-        headers: { 
-          'content-type': 'application/json',
-          'accept': 'application/json'
-        },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify(payload)
       });
       
-      console.log('📨 Response received:', {
-        status: response.status,
-        statusText: response.statusText,
-        headers: Object.fromEntries(response.headers.entries())
-      });
-      
-      let result;
-      try {
-        const responseText = await response.text();
-        console.log('📄 Raw response:', responseText.substring(0, 500));
-        result = JSON.parse(responseText);
-        console.log('✅ Parsed response:', result);
-      } catch (parseError) {
-        console.error('❌ Failed to parse response:', parseError);
-        throw new Error('Invalid response from server');
-      }
+      const result = await response.json();
+      console.log('📨 Response:', result);
       
       if (!response.ok || !result.ok) {
-        console.error('❌ Server error:', result);
-        throw new Error(result.error || result.message || ('HTTP ' + response.status));
+        console.warn('⚠️ Finalize failed, checking if blocks sold anyway...');
+        await loadStatus();
+        if (areMyBlocksSoldWithArt()) {
+          console.log('✅ Blocks appear sold despite error');
+          purchaseCommitted = true;
+        } else {
+          throw new Error(result.error || result.message || ('HTTP ' + response.status));
+        }
+      } else {
+        console.log('✅ Finalize successful');
+        purchaseCommitted = true;
       }
 
-      console.log('🎉 Purchase successful!');
+      console.log('🎉 Success!');
       
-      // Success cleanup
-      purchaseCommitted = true;
       activeReservationId = null; 
       localStorage.removeItem('iw_reservation_id');
       myReservedSet = new Set(); 
@@ -478,11 +581,10 @@ if (form) {
       window.myReservedSet = myReservedSet;
       window.activeReservationId = activeReservationId;
       
-      alert('🎉 Purchase completed successfully! Your pixels are now live on the wall.');
+      alert('🎉 Purchase completed successfully!');
       
     } catch (error) {
       console.error('❌ PURCHASE FAILED:', error);
-      console.error('Error stack:', error.stack);
       alert('Could not complete purchase: ' + (error?.message || error));
     } finally {
       submitting = false;
@@ -495,9 +597,18 @@ if (form) {
   });
 }
 
+// Test functions for debugging
+window.testSelection = function() {
+  console.log('🧪 Testing selection of block 0...');
+  myReservedSet.add(0);
+  setCellState(0, 'mine');
+  updateBuyLabel();
+  debugState();
+};
+
 // Init
 (async () => {
-  console.log('Initializing app...');
+  console.log('🚀 Initializing app...');
   try {
     await loadData();
     buildGridOnce();
@@ -505,9 +616,10 @@ if (form) {
     refreshHeader(); 
     updateBuyLabel();
     setInterval(loadStatus, STATUS_POLL_MS);
-    console.log('App initialized successfully');
+    console.log('✅ App initialized successfully');
+    debugState();
   } catch (e) {
-    console.error('Init failed:', e);
+    console.error('❌ Init failed:', e);
     alert('Failed to initialize app: ' + e.message);
   }
 })();
@@ -520,6 +632,6 @@ window.addEventListener('pagehide', () => {
     const blob = new Blob([payload], { type: 'application/json' });
     navigator.sendBeacon('/.netlify/functions/unlock', blob);
   } catch (e) {
-    console.warn('Beacon unlock failed:', e);
+    console.warn('❌ Beacon unlock failed:', e);
   }
 });
