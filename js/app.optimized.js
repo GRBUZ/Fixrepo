@@ -88,46 +88,55 @@ async function loadStatus() {
     const r = await fetch('/.netlify/functions/status', { cache: 'no-store' });
     const s = await r.json();
     console.log('📡 Status response:', s);
+    console.log('📡 Pending from server:', s.pending);
+    console.log('📡 My reserved blocks:', Array.from(myReservedSet));
+    
+    // CHECK: Are my blocks in the server's pending list?
+    let myBlocksInServerPending = 0;
+    for (const b of myReservedSet) {
+      if (s.pending && s.pending.includes(b)) {
+        myBlocksInServerPending++;
+      }
+    }
+    console.log(`📡 ${myBlocksInServerPending}/${myReservedSet.size} of my blocks are in server pending`);
+    
+    // If our blocks are NOT in server pending, there's a problem with the reservation
+    if (myReservedSet.size > 0 && myBlocksInServerPending === 0) {
+      console.warn('⚠️ WARNING: My blocks are NOT in server pending! Reservation might be expired.');
+      console.warn('⚠️ Active reservation ID:', activeReservationId);
+      // DO NOT CLEAR myReservedSet here - keep them visually selected
+    }
     
     const old = pendingSet;
     const next = new Set(s.pending || []);
     
-    // Add our reserved blocks to the pending set
-    for (const b of myReservedSet) {
-      next.add(b);
-    }
-    
-    // Update visual state for other users' pending blocks
-    for (const b of next) {
-      if (!old.has(b) && !myReservedSet.has(b)) {
-        setCellState(b, 'pending');
-      }
-    }
-    
-    // Clear blocks that are no longer pending (but not ours)
-    for (const b of old) {
-      if (!next.has(b) && !myReservedSet.has(b)) {
-        setCellState(b, 'free');
-      }
-    }
-    
-    pendingSet = next;
+    // Update dynCells and paint regions FIRST
     dynCells = s.artCells || {};
     paintRegions();
     
-    // Update sold blocks
+    // Now update cell states, but SKIP our reserved blocks
     const sold = committedSoldSet();
+    
+    // First pass: update all cells except ours
     for (let i = 0; i < cells.length; i++) {
+      // Skip our reserved blocks completely
+      if (myReservedSet.has(i)) continue;
+      
       if (sold.has(i)) {
         setCellState(i, 'sold');
+      } else if (next.has(i)) {
+        setCellState(i, 'pending');
+      } else {
+        setCellState(i, 'free');
       }
     }
     
-    // CRITICAL: Always re-apply our reserved blocks LAST
+    // Second pass: ensure our blocks stay selected
     for (const b of myReservedSet) {
       setCellState(b, 'mine');
     }
     
+    pendingSet = next;
     refreshHeader();
     
     console.log('✅ Status loaded, preserved', myReservedSet.size, 'reserved blocks');
@@ -685,6 +694,40 @@ window.testSelection = function() {
   debugState();
 };
 
+// Resync reservation if needed
+async function resyncReservation() {
+  if (myReservedSet.size === 0) return;
+  
+  console.log('🔄 Resyncing reservation...');
+  const blocks = Array.from(myReservedSet);
+  
+  try {
+    const r = await fetch('/.netlify/functions/lock', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ 
+        op: 'set',  // Use 'set' to replace all blocks
+        blocks: blocks,
+        reservationId: activeReservationId || undefined
+      })
+    });
+    
+    const res = await r.json();
+    console.log('🔄 Resync response:', res);
+    
+    if (res.ok) {
+      activeReservationId = res.reservationId;
+      localStorage.setItem('iw_reservation_id', activeReservationId);
+      localStorage.setItem('iw_my_blocks', JSON.stringify(blocks));
+      console.log('✅ Reservation resynced successfully');
+    } else {
+      console.error('❌ Resync failed:', res.error);
+    }
+  } catch (e) {
+    console.error('❌ Resync error:', e);
+  }
+}
+
 // Init
 (async () => {
   console.log('🚀 Initializing app...');
@@ -721,9 +764,36 @@ window.testSelection = function() {
     // Display restored blocks
     for (const b of myReservedSet) setCellState(b, 'mine');
     
+    // If we have blocks but they're not in server pending, resync
+    if (myReservedSet.size > 0) {
+      await resyncReservation();
+    }
+    
     refreshHeader(); 
     updateBuyLabel();
-    setInterval(loadStatus, STATUS_POLL_MS);
+    
+    // Poll status but less frequently
+    setInterval(async () => {
+      await loadStatus();
+      
+      // Check if we need to resync (every 30 seconds)
+      if (Date.now() % 30000 < STATUS_POLL_MS) {
+        let needsResync = false;
+        if (myReservedSet.size > 0) {
+          // Check if our blocks are still in pending
+          let found = 0;
+          for (const b of myReservedSet) {
+            if (pendingSet.has(b)) found++;
+          }
+          if (found === 0) {
+            console.warn('⚠️ Blocks not in pending, resyncing...');
+            needsResync = true;
+          }
+        }
+        if (needsResync) await resyncReservation();
+      }
+    }, STATUS_POLL_MS);
+    
     console.log('✅ App initialized successfully');
     debugState();
   } catch (e) {
