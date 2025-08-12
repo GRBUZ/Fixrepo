@@ -362,13 +362,18 @@ function areMyBlocksSoldWithArt() {
 
 // FIXED: Single unified submit handler (no conflicts)
 let submitting = false;
+// DEBUG CLIENT - Add this to your app.optimized.js in the submit handler
+
+// Replace the submit event listener with this debug version:
 if (form) {
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    e.stopPropagation(); // Prevent other handlers
+    e.stopPropagation();
+    
+    console.log('=== FORM SUBMISSION START ===');
     
     if (submitting) {
-      console.log('Already submitting, ignoring duplicate submission');
+      console.log('❌ Already submitting, ignoring');
       return;
     }
     
@@ -381,11 +386,16 @@ if (form) {
     }
 
     try {
-      console.log('Starting submission process...');
-      
       // Validate required fields
       const file = fldImageFile?.files?.[0];
       const linkUrl = fldLink?.value?.trim();
+      
+      console.log('📋 Validation:', { 
+        hasFile: !!file, 
+        linkUrl, 
+        selectedBlocks: myReservedSet.size,
+        reservationId: activeReservationId
+      });
       
       if (!file) {
         throw new Error('Please upload a profile image.');
@@ -393,60 +403,69 @@ if (form) {
       if (!linkUrl) {
         throw new Error('Please enter your Instagram/TikTok/YouTube link.');
       }
-      
-      console.log('Converting file to data URL...');
-      const image = await fileToDataURL(file);
-      
-      // Prepare form data for Netlify Forms
-      const data = new FormData(form);
-      const blocks = Array.from(myReservedSet);
-      data.set('blockIndex', blocks.join(','));
-      
-      console.log('Submitting to Netlify Forms...');
-      // Submit to Netlify Forms (best effort, non-blocking)
-      try {
-        await fetch(form.action || '/', { method: 'POST', body: data });
-      } catch (e) {
-        console.warn('Netlify Forms submission failed (non-critical):', e);
+      if (myReservedSet.size === 0) {
+        throw new Error('No blocks selected.');
       }
-
-      // Prepare payload for finalize function
+      
+      console.log('✅ Validation passed');
+      console.log('📄 Converting file to data URL...');
+      const image = await fileToDataURL(file);
+      console.log('✅ File converted, length:', image.length);
+      
+      // Prepare payload
+      const blocks = Array.from(myReservedSet);
       const payload = {
         reservationId: activeReservationId || localStorage.getItem('iw_reservation_id') || '',
         imageUrl: image,
         linkUrl: linkUrl,
-        name: data.get('name') || '',
+        name: fldLink.dataset.name || '', // if you have a name field
         blocks: blocks
       };
       
-      console.log('Calling finalize function...', payload);
+      console.log('🚀 Sending to finalize:', {
+        reservationId: payload.reservationId.substring(0, 8) + '...',
+        linkUrl: payload.linkUrl,
+        imageUrlLength: payload.imageUrl.length,
+        blocksCount: payload.blocks.length,
+        firstFewBlocks: payload.blocks.slice(0, 5)
+      });
       
       // Call finalize function
       const response = await fetch('/.netlify/functions/finalize', {
         method: 'POST', 
-        headers: { 'content-type': 'application/json' },
+        headers: { 
+          'content-type': 'application/json',
+          'accept': 'application/json'
+        },
         body: JSON.stringify(payload)
       });
       
-      const result = await response.json();
-      console.log('Finalize response:', result);
+      console.log('📨 Response received:', {
+        status: response.status,
+        statusText: response.statusText,
+        headers: Object.fromEntries(response.headers.entries())
+      });
+      
+      let result;
+      try {
+        const responseText = await response.text();
+        console.log('📄 Raw response:', responseText.substring(0, 500));
+        result = JSON.parse(responseText);
+        console.log('✅ Parsed response:', result);
+      } catch (parseError) {
+        console.error('❌ Failed to parse response:', parseError);
+        throw new Error('Invalid response from server');
+      }
       
       if (!response.ok || !result.ok) {
-        console.warn('Finalize failed, checking if blocks were actually sold...');
-        // Force-refresh status; maybe finalize actually succeeded server-side
-        await loadStatus();
-        if (areMyBlocksSoldWithArt()) {
-          console.log('Blocks appear to have been sold successfully despite error');
-          purchaseCommitted = true;
-        } else {
-          throw new Error(result.error || ('HTTP ' + response.status));
-        }
-      } else {
-        console.log('Purchase finalized successfully!');
-        purchaseCommitted = true;
+        console.error('❌ Server error:', result);
+        throw new Error(result.error || result.message || ('HTTP ' + response.status));
       }
 
-      // Success path (normal or rescued)
+      console.log('🎉 Purchase successful!');
+      
+      // Success cleanup
+      purchaseCommitted = true;
       activeReservationId = null; 
       localStorage.removeItem('iw_reservation_id');
       myReservedSet = new Set(); 
@@ -456,14 +475,14 @@ if (form) {
       await loadStatus();
       updateBuyLabel();
       
-      // Update global references
       window.myReservedSet = myReservedSet;
       window.activeReservationId = activeReservationId;
       
       alert('🎉 Purchase completed successfully! Your pixels are now live on the wall.');
       
     } catch (error) {
-      console.error('Finalize error:', error);
+      console.error('❌ PURCHASE FAILED:', error);
+      console.error('Error stack:', error.stack);
       alert('Could not complete purchase: ' + (error?.message || error));
     } finally {
       submitting = false;
@@ -471,6 +490,7 @@ if (form) {
         submitBtn.disabled = false; 
         submitBtn.textContent = prevLabel; 
       }
+      console.log('=== FORM SUBMISSION END ===');
     }
   });
 }
