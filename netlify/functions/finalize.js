@@ -1,10 +1,15 @@
+/* Netlify Functions – universal finalize (v1/v2 compatible, ES Modules)
+ * - Accepts POST (JSON or form-urlencoded) and OPTIONS
+ * - Falls back to client-sent `blocks` or `blockIndex` if reservationId is missing
+ * - Uses @netlify/blobs store "reservations" (state.sold + state.locks)
+ */
 import { getStore } from '@netlify/blobs';
 import { json } from './_common.js';
 
 const STORE = 'reservations';
 const STATE_KEY = 'state';
 
-const now = () => Date.now();
+function now(){ return Date.now(); }
 
 function parseBlockIndexString(s) {
   if (!s) return [];
@@ -12,10 +17,7 @@ function parseBlockIndexString(s) {
   const seen = new Set();
   String(s).split(/[,\s;]+/).forEach(part => {
     const n = Number(part);
-    if (Number.isInteger(n) && n >= 0 && n < 10000 && !seen.has(n)) { 
-      seen.add(n); 
-      out.push(n); 
-    }
+    if (Number.isInteger(n) && n >= 0 && n < 10000 && !seen.has(n)) { seen.add(n); out.push(n); }
   });
   return out;
 }
@@ -25,165 +27,112 @@ function uniqInts(list) {
   const seen = new Set();
   (Array.isArray(list) ? list : []).forEach(v => {
     const n = Number(v);
-    if (Number.isInteger(n) && n >= 0 && n < 10000 && !seen.has(n)) { 
-      seen.add(n); 
-      out.push(n); 
-    }
+    if (Number.isInteger(n) && n >= 0 && n < 10000 && !seen.has(n)) { seen.add(n); out.push(n); }
   });
   return out;
 }
 
-export default async function handler(req) {
-  try {
-    console.log('Finalize function called with method:', req.method);
-    
-    if (req.method === 'OPTIONS') {
-      return json({}, 204);
-    }
-    
-    if (req.method !== 'POST') {
-      console.log('Method not allowed:', req.method);
-      return json({ ok: false, error: 'METHOD_NOT_ALLOWED' }, 405);
-    }
+function isJsonCT(headers) {
+  const ct = headers && (headers['content-type'] || headers['Content-Type'] || '');
+  return /application\/json/i.test(ct);
+}
 
-    // Parse request body
+export default async function handler(request) {
+  try {
+    const method = request.method?.toUpperCase();
+    if (method === 'OPTIONS') return json({}, 204);
+    if (method !== 'POST') return json({ ok:false, error:'METHOD_NOT_ALLOWED' }, 405);
+
+    // Parse body (JSON or form)
     let body = {};
-    try {
-      body = await req.json();
-      console.log('Parsed JSON body successfully');
-    } catch (error) {
-      console.error('Failed to parse JSON body:', error);
-      
-      // Try to parse as form data
-      try {
-        const text = await req.text();
-        const params = new URLSearchParams(text);
+    const rawBody = await request.text().catch(() => '');
+    
+    if (isJsonCT(request.headers)) {
+      try { 
+        body = JSON.parse(rawBody || '{}'); 
+      } catch { 
+        body = {}; 
+      }
+    } else {
+      try { 
+        body = JSON.parse(rawBody); 
+      } catch {
+        const params = new URLSearchParams(rawBody);
         body = Object.fromEntries(params.entries());
-        console.log('Parsed as form data successfully');
-      } catch (formError) {
-        console.error('Failed to parse as form data:', formError);
-        return json({ ok: false, error: 'INVALID_REQUEST_BODY' }, 400);
       }
     }
 
-    console.log('Request body keys:', Object.keys(body));
-
-    // Extract and validate required fields
-    const reservationId = (body.reservationId || '').toString().trim();
-    const imageUrl = (body.imageUrl || '').toString().trim();
-    const linkUrl = (body.linkUrl || '').toString().trim();
-    const name = (body.name || '').toString().trim();
+    const reservationId = (body.reservationId || '').toString();
+    const imageUrl = (body.imageUrl || '').toString();
+    const linkUrl = (body.linkUrl || '').toString();
+    const name = (body.name || '').toString();
     const blocksFromClient = uniqInts(body.blocks || []);
     const blocksFromHidden = parseBlockIndexString(body.blockIndex || body.blocksCsv || '');
 
-    console.log('Extracted fields:', {
-      hasReservationId: !!reservationId,
-      hasImageUrl: !!imageUrl,
-      hasLinkUrl: !!linkUrl,
-      blocksFromClient: blocksFromClient.length,
-      blocksFromHidden: blocksFromHidden.length
-    });
-
     if (!imageUrl) {
-      console.log('Missing image URL');
-      return json({ ok: false, error: 'MISSING_IMAGE' }, 400);
+      return json({ ok:false, error:'MISSING_IMAGE' }, 400);
     }
 
-    if (!linkUrl) {
-      console.log('Missing link URL');
-      return json({ ok: false, error: 'MISSING_LINK' }, 400);
-    }
+    console.log('Finalize request:', { reservationId, linkUrl, name, blocksFromClient, blocksFromHidden });
 
-    // Initialize store and get current state
-    console.log('Initializing store...');
     const store = getStore(STORE, { consistency: 'strong' });
-    
-    let state;
-    try {
-      state = (await store.get(STATE_KEY, { type: 'json' })) || { sold: {}, locks: {} };
-      console.log('Retrieved state successfully');
-    } catch (error) {
-      console.error('Failed to retrieve state:', error);
-      return json({ ok: false, error: 'STORE_ACCESS_ERROR' }, 500);
-    }
+    const state = (await store.get(STATE_KEY, { type: 'json' })) || { sold: {}, locks: {} };
+
+    console.log('Current state:', { soldCount: Object.keys(state.sold).length, locksCount: Object.keys(state.locks).length });
 
     // Determine blocks to finalize
     let blocks = [];
-    const lock = reservationId && state.locks ? state.locks[reservationId] : null;
+    const lock = reservationId ? (state.locks && state.locks[reservationId]) : null;
     
     if (lock && Array.isArray(lock.blocks) && lock.blocks.length) {
       blocks = lock.blocks.map(Number).filter(Number.isInteger);
-      console.log('Using blocks from reservation:', blocks.length);
+      console.log('Using blocks from reservation:', blocks);
     } else {
-      console.log('No valid reservation found, using client blocks');
       const candidates = blocksFromClient.length ? blocksFromClient : blocksFromHidden;
-      
       if (candidates.length) {
         // Filter out already sold or locked by others
         const lockedAll = new Set();
-        for (const [rid, lockData] of Object.entries(state.locks || {})) {
-          if (lockData && Array.isArray(lockData.blocks)) {
-            lockData.blocks.forEach(b => lockedAll.add(Number(b)));
-          }
+        for (const rid of Object.keys(state.locks || {})) {
+          const l = state.locks[rid];
+          (l && Array.isArray(l.blocks) ? l.blocks : []).forEach(b => lockedAll.add(Number(b)));
         }
-        
         candidates.forEach(b => {
-          if (!state.sold[b] && !lockedAll.has(b)) {
-            blocks.push(b);
-          }
+          if (!state.sold[b] && !lockedAll.has(b)) blocks.push(b);
         });
-        console.log('Filtered available blocks:', blocks.length, 'from', candidates.length, 'candidates');
+        console.log('Using fallback blocks:', blocks, 'from candidates:', candidates);
       }
     }
 
     if (!blocks.length) {
-      console.log('No blocks to finalize');
-      return json({ ok: false, error: 'NO_BLOCKS_TO_FINALIZE' }, 404);
+      console.log('No blocks found to finalize');
+      return json({ ok:false, error:'LOCK_NOT_FOUND_OR_EMPTY' }, 404);
     }
 
     console.log('Finalizing blocks:', blocks);
 
-    // Mark blocks as sold
+    // Mark sold
     state.sold = state.sold || {};
-    const soldData = { 
-      imageUrl, 
-      linkUrl, 
-      name: name || '', 
-      soldAt: now() 
-    };
-
     blocks.forEach(b => {
-      state.sold[b] = soldData;
+      state.sold[b] = { imageUrl, linkUrl, name, soldAt: now() };
     });
 
-    // Clean up the reservation
+    // Clean lock
     if (reservationId && state.locks && state.locks[reservationId]) {
       delete state.locks[reservationId];
-      console.log('Cleaned up reservation:', reservationId);
+      console.log('Cleaned reservation:', reservationId);
     }
 
-    // Save updated state
-    try {
-      await store.setJSON(STATE_KEY, state);
-      console.log('State saved successfully');
-    } catch (error) {
-      console.error('Failed to save state:', error);
-      return json({ ok: false, error: 'STORE_SAVE_ERROR' }, 500);
-    }
+    await store.setJSON(STATE_KEY, state);
+    console.log('State saved successfully. New sold count:', Object.keys(state.sold).length);
 
-    console.log('Purchase finalized successfully for', blocks.length, 'blocks');
-    return json({ 
-      ok: true, 
-      soldBlocks: blocks, 
-      artCells: state.sold 
-    });
-
+    return json({ ok:true, soldBlocks: blocks, artCells: state.sold });
   } catch (error) {
-    console.error('Finalize function error:', error);
+    console.error('finalize error:', error);
     return json({ 
-      ok: false, 
-      error: 'SERVER_ERROR', 
-      message: error && error.message ? error.message : String(error) 
+      ok:false, 
+      error:'SERVER_ERROR', 
+      message: error && error.message ? error.message : String(error),
+      stack: error.stack
     }, 500);
   }
 }
